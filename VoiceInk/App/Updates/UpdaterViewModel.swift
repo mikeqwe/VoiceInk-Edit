@@ -12,6 +12,11 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
         static let legacyAvailableUpdate = "VoiceInkAvailableUpdate"
     }
 
+    /// This fork is built from source. Sparkle is never started, so it cannot
+    /// check the official VoiceInk feed or replace this build with an official
+    /// release. Update by pulling and rebuilding.
+    static let isEnabled = false
+
     private let defaults = UserDefaults.standard
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "updates")
     private var subscriptions = Set<AnyCancellable>()
@@ -26,6 +31,11 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     override init() {
         super.init()
+
+        guard Self.isEnabled else {
+            logger.notice("Updater disabled in this build")
+            return
+        }
 
         let updater = updaterController.updater
 
@@ -56,7 +66,7 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     func setAutomaticallyChecksForUpdates(_ value: Bool) {
-        guard automaticallyChecksForUpdates != value else { return }
+        guard Self.isEnabled, automaticallyChecksForUpdates != value else { return }
         updaterController.updater.automaticallyChecksForUpdates = value
     }
 
