@@ -22,16 +22,24 @@ final class AccessibilityTextReader {
     private let messagingTimeout: Float
     private let fieldMessagingTimeout: Float?
     private let readBudget: TimeInterval?
+    private let maximumFieldLength: Int
     private var readDeadline: TimeInterval?
 
     private var canRead: Bool {
         readDeadline.map { ProcessInfo.processInfo.systemUptime < $0 } ?? true
     }
 
-    init(messagingTimeout: Float = 0.10, fieldMessagingTimeout: Float? = nil, readBudget: TimeInterval? = nil) {
+    /// - Parameter maximumFieldLength: a field longer than this, in UTF-16 units, gives no reading.
+    init(
+        messagingTimeout: Float = 0.10,
+        fieldMessagingTimeout: Float? = nil,
+        readBudget: TimeInterval? = nil,
+        maximumFieldLength: Int = AccessibilityTextReader.maximumFieldUTF16Length
+    ) {
         self.messagingTimeout = messagingTimeout
         self.fieldMessagingTimeout = fieldMessagingTimeout
         self.readBudget = readBudget
+        self.maximumFieldLength = maximumFieldLength
     }
 
     private struct MarkerSnapshot {
@@ -50,7 +58,13 @@ final class AccessibilityTextReader {
 
     private var webAccessibilityProcesses = Set<pid_t>()
 
-    func focusedReadings(processID: pid_t, includeSystemFocus: Bool = true) -> [AccessibilityTextReading] {
+    /// - Parameter includeReadOnly: also read a focused element that is not editable (a
+    ///   read-only text view, a web page). Secure and protected fields are never read.
+    func focusedReadings(
+        processID: pid_t,
+        includeSystemFocus: Bool = true,
+        includeReadOnly: Bool = false
+    ) -> [AccessibilityTextReading] {
         readDeadline = readBudget.map { ProcessInfo.processInfo.systemUptime + $0 }
         defer { readDeadline = nil }
         let appElement = AXUIElementCreateApplication(processID)
@@ -79,7 +93,7 @@ final class AccessibilityTextReader {
             if let fieldMessagingTimeout {
                 AXUIElementSetMessagingTimeout(candidate.element, fieldMessagingTimeout)
             }
-            guard isEditable(candidate.element) else { continue }
+            guard isReadable(candidate.element, includeReadOnly: includeReadOnly) else { continue }
 
             let candidateReadings = makeReadings(
                 from: candidate.element,
@@ -100,10 +114,10 @@ final class AccessibilityTextReader {
         }
     }
 
-    private func isEditable(_ element: AXUIElement) -> Bool {
+    private func isReadable(_ element: AXUIElement, includeReadOnly: Bool) -> Bool {
         guard copyString(kAXSubroleAttribute as CFString, from: element) != kAXSecureTextFieldSubrole,
             copyBool("AXProtectedContent" as CFString, from: element) != true else { return false }
-        return AccessibilityFocusReader.editableState(of: element) == true
+        return includeReadOnly || AccessibilityFocusReader.editableState(of: element) == true
     }
 
     func textValue(from element: AXUIElement) -> AccessibilityTextValue? {
@@ -114,7 +128,7 @@ final class AccessibilityTextReader {
             attributes.contains(kAXNumberOfCharactersAttribute as String),
             let documentLength = copyInteger(kAXNumberOfCharactersAttribute as CFString, from: element),
             documentLength >= 0,
-            documentLength <= Self.maximumFieldUTF16Length,
+            documentLength <= maximumFieldLength,
             let text = copyStringForRange(
                 NSRange(location: 0, length: documentLength),
                 from: element
@@ -125,7 +139,7 @@ final class AccessibilityTextReader {
         }
 
         guard let value = copyString(kAXValueAttribute as CFString, from: element),
-            value.utf16.count <= Self.maximumFieldUTF16Length
+            value.utf16.count <= maximumFieldLength
         else {
             guard let markerSnapshot = markerSnapshot(from: element) else { return nil }
             return AccessibilityTextValue(text: markerSnapshot.text, source: "text-markers")
@@ -227,7 +241,7 @@ final class AccessibilityTextReader {
         } else { return nil }
 
         let fieldText = beforeText + selectedText + afterText
-        guard fieldText.utf16.count <= Self.maximumFieldUTF16Length else {
+        guard fieldText.utf16.count <= maximumFieldLength else {
             return nil
         }
 

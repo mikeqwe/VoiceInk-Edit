@@ -18,14 +18,38 @@ final class SuggestController {
     private lazy var panel = SuggestPanel(model: model)
     private var session: SuggestCore.Session?
     private var request: Task<Void, Never>?
+    /// The run's request, kept for a new set: the same selection, context and model.
+    private var asked: Request?
+
+    private struct Request {
+        let selection: String
+        let context: SuggestCore.Context
+        let systemPrompt: String
+        let provider: AIProvider
+        let model: String?
+    }
+
+    /// Suggest waits at least this long for the model. The whole field text can be tens of
+    /// thousands of tokens, and the list stays open in "Thinking…" with Esc to cancel.
+    static let minimumRequestTimeout: TimeInterval = 30
 
     private init() {}
 
     /// The Suggest shortcut. Opens the list at once, in "thinking", and takes its keys
     /// before anything else happens, so a digit pressed early is consumed and ignored.
+    /// Pressed again while the list shows, it asks for a new set that excludes every option
+    /// shown in this run; the list keeps its keys meanwhile.
     func run(modelContext: ModelContext, isRecorderVisible: Bool) {
-        guard session == nil else {
-            Self.logger.notice("Suggest ignored reason=already-open")
+        if var session {
+            guard session.askForNewSet(), let asked else {
+                Self.logger.notice("Suggest ignored reason=already-thinking")
+                return
+            }
+            self.session = session
+            model.items = nil
+            panel.fitToContent()
+            Self.logger.notice("Suggest new set rejected=\(session.shown.count, privacy: .public)")
+            request = Task { [weak self] in await self?.ask(asked, rejected: session.shown) }
             return
         }
         guard !isRecorderVisible else {
@@ -34,6 +58,7 @@ final class SuggestController {
             return
         }
         session = SuggestCore.Session()
+        asked = nil
         startKeys()
         model.items = nil
         showPanel()
@@ -97,7 +122,11 @@ final class SuggestController {
         guard isCurrent else { return }
         session?.selectionCaptured(selection)
         guard let selection else {
-            fail("Suggest: select a word first. Nothing was changed.", reason: "no-selection")
+            fail("Suggest: select some text first. Nothing was changed.", reason: "no-selection")
+            return
+        }
+        guard SuggestCore.acceptsSelection(selection) else {
+            fail("Suggest: select at most \(SuggestCore.maxSelectionLength) characters. Nothing was changed.", reason: "selection-too-long")
             return
         }
         guard let target = Self.providerAndModel() else {
@@ -107,30 +136,47 @@ final class SuggestController {
         let processID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let context = await SuggestContextReader.read(processID: processID, selection: selection)
         guard isCurrent else { return }
+        session?.rawSelectionRead(context.around?.selected)
         let vocabulary = CustomVocabularyService.shared.loadSavedVocabulary(from: modelContext).enhancementSection
-        let systemPrompt = [SuggestCore.systemPrompt, vocabulary].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        let message = SuggestCore.userMessage(selection: selection, context: context)
-        Self.logger.notice("Suggest request provider=\(target.provider.rawValue, privacy: .public) model=\(target.model ?? "default", privacy: .public) selectionChars=\(selection.count, privacy: .public) context=\(context != nil, privacy: .public)")
+        let request = Request(
+            selection: selection,
+            context: context,
+            systemPrompt: [SuggestCore.systemPrompt, vocabulary].filter { !$0.isEmpty }.joined(separator: "\n\n"),
+            provider: target.provider,
+            model: target.model
+        )
+        asked = request
+        await ask(request, rejected: [])
+    }
+
+    private func ask(_ request: Request, rejected: [String]) async {
+        let message = SuggestCore.userMessage(selection: request.selection, context: request.context, rejected: rejected)
+        let context = request.context
+        let aroundChars = context.around.map { $0.before.utf16.count + $0.after.utf16.count } ?? 0
+        let otherChars = context.other.reduce(0) { $0 + $1.utf16.count }
+        Self.logger.notice("Suggest request provider=\(request.provider.rawValue, privacy: .public) model=\(request.model ?? "default", privacy: .public) selectionChars=\(request.selection.count, privacy: .public) context=\(context.around != nil, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) otherChars=\(otherChars, privacy: .public) rejected=\(rejected.count, privacy: .public)")
+        let started = Date()
         do {
             let completion = try await aiService.performChatCompletion(
-                provider: target.provider,
-                modelName: target.model,
+                provider: request.provider,
+                modelName: request.model,
                 messages: [.user(message)],
-                systemPrompt: systemPrompt,
+                systemPrompt: request.systemPrompt,
                 localUserPrompt: message,
-                timeout: EnhancementRequestSettings.timeout,
+                timeout: max(EnhancementRequestSettings.timeout, Self.minimumRequestTimeout),
                 retryOnTimeout: false
             )
             guard isCurrent else { return }
-            let items = SuggestCore.replacements(fromModelOutput: completion.text, original: selection)
+            let items = SuggestCore.replacements(
+                fromModelOutput: completion.text, original: request.selection, excluding: rejected)
             guard !items.isEmpty else {
-                fail("Suggest: no replacements came back. Nothing was changed.", reason: "empty-answer")
+                fail("Suggest: no \(rejected.isEmpty ? "" : "new ")replacements came back. Nothing was changed.", reason: "empty-answer")
                 return
             }
             session?.show(items)
             model.items = items
             panel.fitToContent()
-            Self.logger.notice("Suggest ready count=\(items.count, privacy: .public)")
+            Self.logger.notice("Suggest ready count=\(items.count, privacy: .public) seconds=\(Date().timeIntervalSince(started), format: .fixed(precision: 2), privacy: .public)")
         } catch {
             guard isCurrent else { return }
             fail("Suggest failed: \(error.localizedDescription) Nothing was changed.", reason: "request-error")
@@ -158,7 +204,18 @@ final class SuggestController {
         panel.orderFrontRegardless()
     }
 
+    /// A first request that fails closes the list. A new set that fails shows the previous
+    /// list again, so the options already offered stay pickable.
     private func fail(_ notice: String, reason: String) {
+        if var session, session.restorePrevious(), case .ready(let items) = session.phase {
+            self.session = session
+            request = nil
+            model.items = items
+            panel.fitToContent()
+            Self.logger.notice("Suggest new set failed reason=\(reason, privacy: .public) restored=\(items.count, privacy: .public)")
+            notify(notice)
+            return
+        }
         Self.logger.notice("Suggest closed reason=\(reason, privacy: .public)")
         finish()
         notify(notice)
@@ -171,6 +228,7 @@ final class SuggestController {
         panel.orderOut(nil)
         model.items = nil
         session = nil
+        asked = nil
     }
 
     private func notify(_ title: String) {
@@ -186,27 +244,33 @@ final class SuggestController {
     }
 }
 
-/// Text around the selection, where VoiceInk's Accessibility reader returns the focused
-/// field. No promise for apps whose fields it cannot read (Electron editors among them).
+/// Everything VoiceInk's Accessibility reader returns for the focused element, editable or
+/// read-only, up to `SuggestCore.contextCap`. No promise for apps whose elements it cannot
+/// read (Electron editors among them).
 enum SuggestContextReader {
     private static let queue = DispatchQueue(label: "com.prakashjoshipax.voiceink.suggest-context", qos: .userInitiated)
 
-    static func read(processID: pid_t?, selection: String) async -> SuggestCore.Context? {
-        guard let processID else { return nil }
+    static func read(processID: pid_t?, selection: String) async -> SuggestCore.Context {
+        guard let processID else { return .none }
         return await withCheckedContinuation { continuation in
             queue.async {
                 guard AXIsProcessTrusted(), processID != ProcessInfo.processInfo.processIdentifier else {
-                    continuation.resume(returning: nil)
+                    continuation.resume(returning: .none)
                     return
                 }
-                let reader = AccessibilityTextReader(messagingTimeout: 0.05, fieldMessagingTimeout: 0.05, readBudget: 0.3)
+                let reader = AccessibilityTextReader(
+                    messagingTimeout: 0.05,
+                    fieldMessagingTimeout: 0.25,
+                    readBudget: 0.6,
+                    maximumFieldLength: SuggestCore.contextCap
+                )
                 let app = AXUIElementCreateApplication(processID)
                 defer { reader.restoreWebAccessibility(processID: processID, appElement: app) }
-                let readings = reader.focusedReadings(processID: processID, includeSystemFocus: false)
-                let context = readings.lazy.compactMap { reading -> SuggestCore.Context? in
-                    guard let range = reading.selection else { return nil }
-                    return SuggestCore.context(fieldText: reading.fieldText, selection: range, selectedText: selection)
-                }.first
+                let readings = reader.focusedReadings(processID: processID, includeSystemFocus: false, includeReadOnly: true)
+                let context = SuggestCore.context(
+                    readings: readings.map { SuggestCore.TextReading(text: $0.fieldText, selection: $0.selection) },
+                    selectedText: selection
+                )
                 continuation.resume(returning: context)
             }
         }
@@ -279,14 +343,24 @@ struct SuggestPanelView: View {
                         Text(verbatim: "\(index + 1)")
                             .font(.system(.body, design: .monospaced))
                             .foregroundStyle(.secondary)
-                        Text(verbatim: item)
-                            .font(.body)
+                        if item.count > 60 || item.contains("\n") {
+                            // A phrase or a few lines: wrap at a fixed width.
+                            Text(verbatim: item)
+                                .font(.body)
+                                .lineLimit(8)
+                                .truncationMode(.tail)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(width: 560, alignment: .leading)
+                        } else {
+                            Text(verbatim: item)
+                                .font(.body)
+                        }
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(Text(verbatim: "\(index + 1) \(item)"))
                     .accessibilityIdentifier("suggest-item-\(index + 1)")
                 }
-                Text(verbatim: "Fn + digit picks · Esc closes")
+                Text(verbatim: "Fn + digit picks · Suggest again for others · Esc closes")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {

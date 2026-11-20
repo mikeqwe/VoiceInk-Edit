@@ -130,21 +130,156 @@ final class SuggestTests: XCTestCase {
         XCTAssertEqual(session.phase, .closed)
     }
 
-    // MARK: Context
+    // MARK: Context (F3: everything the reader returns, up to the cap)
 
-    func testContextIsTheTextAroundTheSelectionOnly() {
-        let text = "I asked Клод to review the patch."
-        let range = (text as NSString).range(of: "Клод")
+    private func reading(_ text: String, selecting part: String?) -> SuggestCore.TextReading {
+        SuggestCore.TextReading(text: text, selection: part.map { (text as NSString).range(of: $0) })
+    }
+
+    func testWholeFocusedTextIsSent() {
+        let before = String(repeating: "Earlier sentence about the patch. ", count: 300)  // 10,200 chars
+        let after = String(repeating: " Later sentence about the review.", count: 300)
+        let text = before + "Клод" + after
+        let context = SuggestCore.context(readings: [reading(text, selecting: "Клод")], selectedText: "Клод")
+        XCTAssertEqual(context.around, SuggestCore.Context.Around(before: before, selected: "Клод", after: after))
+        XCTAssertEqual(context.other, [])
+        let message = SuggestCore.userMessage(selection: "Клод", context: context)
+        XCTAssertEqual(message, "<TEXT_BEFORE>\(before)</TEXT_BEFORE>\n<SELECTION>Клод</SELECTION>\n<TEXT_AFTER>\(after)</TEXT_AFTER>")
+    }
+
+    func testTextWithoutTheSelectionIsSentLabelled() {
+        // A read-only page or another element: no selection range, or the range holds other text.
+        let page = "A paragraph the user is reading."
+        let field = "I asked Клод to review the patch."
+        let stale = SuggestCore.TextReading(text: field, selection: (field as NSString).range(of: "review"))
+        let context = SuggestCore.context(
+            readings: [SuggestCore.TextReading(text: page, selection: nil), stale], selectedText: "Клод")
+        XCTAssertNil(context.around)
+        XCTAssertEqual(context.other, [page, field])
         XCTAssertEqual(
-            SuggestCore.context(fieldText: text, selection: range, selectedText: "Клод"),
-            SuggestCore.Context(before: "I asked ", after: " to review the patch."))
+            SuggestCore.userMessage(selection: "Клод", context: context),
+            "<SELECTION>Клод</SELECTION>\n"
+                + "<OTHER_TEXT note=\"other text visible in the same window; may be unrelated\">\(page)</OTHER_TEXT>\n"
+                + "<OTHER_TEXT note=\"other text visible in the same window; may be unrelated\">\(field)</OTHER_TEXT>")
+        // With the selection found, other distinct texts still follow; blank and repeated ones do not.
+        let both = SuggestCore.context(
+            readings: [reading(field, selecting: "Клод"), SuggestCore.TextReading(text: page, selection: nil),
+                SuggestCore.TextReading(text: field, selection: nil), SuggestCore.TextReading(text: "  \n", selection: nil)],
+            selectedText: "Клод")
+        XCTAssertEqual(both.around, SuggestCore.Context.Around(before: "I asked ", selected: "Клод", after: " to review the patch."))
+        XCTAssertEqual(both.other, [page])
+        XCTAssertEqual(SuggestCore.userMessage(selection: "Клод", context: .none), "<SELECTION>Клод</SELECTION>")
+    }
+
+    func testContextStaysWithinTheCap() {
+        XCTAssertEqual(SuggestCore.contextCap, 200_000)
+        let text = String(repeating: "a", count: 80) + "Клод" + String(repeating: "b", count: 80)
+        // An even split around the selection when both sides are long.
+        let even = SuggestCore.context(readings: [reading(text, selecting: "Клод")], selectedText: "Клод", cap: 100)
+        XCTAssertEqual(even.around, SuggestCore.Context.Around(
+            before: String(repeating: "a", count: 50), selected: "Клод", after: String(repeating: "b", count: 50)))
+        // Near the start, the unused share goes to the other side.
+        let early = "ab" + "Клод" + String(repeating: "c", count: 300)
+        let shifted = SuggestCore.context(readings: [reading(early, selecting: "Клод")], selectedText: "Клод", cap: 100)
+        XCTAssertEqual(shifted.around, SuggestCore.Context.Around(
+            before: "ab", selected: "Клод", after: String(repeating: "c", count: 98)))
+        // Other text takes what is left, and a cut never splits a composed character.
+        let other = "xyz" + String(repeating: "😀", count: 20)
+        let capped = SuggestCore.context(
+            readings: [reading("12345Клод12345", selecting: "Клод"), SuggestCore.TextReading(text: other, selection: nil)],
+            selectedText: "Клод", cap: 16)
+        // 16 - 10 = 6 units left: "xyz" (3) and one emoji (2); the next emoji (5..<7) would be split at 6.
+        XCTAssertEqual(capped.other, ["xyz😀"])
+        let total = (capped.around.map { $0.before.utf16.count + $0.after.utf16.count } ?? 0)
+            + capped.other.reduce(0) { $0 + $1.utf16.count }
+        XCTAssertLessThanOrEqual(total, 16)
+        // Nothing left: no other text at all.
+        let full = SuggestCore.context(
+            readings: [reading(text, selecting: "Клод"), SuggestCore.TextReading(text: "page", selection: nil)],
+            selectedText: "Клод", cap: 100)
+        XCTAssertEqual(full.other, [])
+    }
+
+    // MARK: The prompt (F3)
+
+    func testPromptSaysTheSelectionIsNotRightWithoutAReason() {
+        let prompt = SuggestCore.systemPrompt
+        XCTAssertTrue(prompt.contains("The selected text is not right here."), prompt)
+        for reason in ["speech", "recogni", "mistake", "misheard", "typo", "because", "Cyrillic"] {
+            XCTAssertFalse(prompt.localizedCaseInsensitiveContains(reason), "gives a reason: \(reason)")
+        }
+        XCTAssertTrue(prompt.contains("Never return the SELECTION unchanged."))
+        XCTAssertTrue(prompt.contains("differs from the SELECTION only in letter case is allowed"))
+        XCTAssertTrue(prompt.contains("OTHER_TEXT, when present, is other text visible in the same window; may be unrelated."))
+        XCTAssertTrue(prompt.contains("REJECTED, when present, lists replacements already offered"))
+        XCTAssertTrue(prompt.contains("a word, a phrase or a few lines"))
+    }
+
+    // MARK: A new set (F3)
+
+    func testANewSetExcludesEveryOptionShown() {
+        var session = readySession(["Claude", "Claude Code"])
+        XCTAssertTrue(session.askForNewSet())
+        XCTAssertEqual(session.phase, .thinking)
+        session.show(["Cloud"])
+        XCTAssertEqual(session.shown, ["Claude", "Claude Code", "Cloud"])
+        XCTAssertTrue(session.askForNewSet())
+        // The model repeats shown options anyway: the code drops them.
+        let output = "[\"Claude\", \"claude\", \"Cloud\", \"Clod\", \"Claude Code\"]"
         XCTAssertEqual(
-            SuggestCore.context(fieldText: text, selection: range, selectedText: "Клод", radius: 3),
-            SuggestCore.Context(before: "ed ", after: " to"))
-        // Another element's text, or a stale range, sends no context.
-        XCTAssertNil(SuggestCore.context(fieldText: text, selection: range, selectedText: "patch"))
-        XCTAssertNil(SuggestCore.context(fieldText: "short", selection: range, selectedText: "Клод"))
-        let message = SuggestCore.userMessage(selection: "Клод", context: nil)
-        XCTAssertEqual(message, "<SELECTION>Клод</SELECTION>")
+            SuggestCore.replacements(fromModelOutput: output, original: "Клод", excluding: session.shown),
+            ["claude", "Clod"])
+        XCTAssertEqual(
+            SuggestCore.userMessage(selection: "Клод", context: .none, rejected: ["Claude", "Cloud"]),
+            "<SELECTION>Клод</SELECTION>\n<REJECTED><OPTION>Claude</OPTION><OPTION>Cloud</OPTION></REJECTED>")
+    }
+
+    func testTheListKeepsItsKeysWhileANewSetLoads() {
+        var thinking = SuggestCore.Session()
+        XCTAssertFalse(thinking.askForNewSet(), "no new set before the first list")
+        var session = readySession(["Claude", "Cloud"])
+        XCTAssertTrue(session.askForNewSet())
+        XCTAssertFalse(session.askForNewSet(), "a second press while loading changes nothing")
+        XCTAssertEqual(session.handle(.pick(1)), .none, "a digit while loading does nothing")
+        XCTAssertEqual(session.phase, .thinking)
+        // A failed new set shows the previous list again, and it still picks.
+        XCTAssertTrue(session.restorePrevious())
+        XCTAssertEqual(session.phase, .ready(["Claude", "Cloud"]))
+        XCTAssertEqual(session.handle(.pick(2)), .apply("Cloud"))
+        // A failed first request has nothing to restore: the run closes.
+        XCTAssertFalse(thinking.restorePrevious())
+        // Esc while loading closes with no write.
+        var loading = readySession(["Claude"])
+        XCTAssertTrue(loading.askForNewSet())
+        XCTAssertEqual(loading.handle(.close), .close)
+        XCTAssertFalse(loading.restorePrevious())
+        XCTAssertEqual(loading.handle(.pick(1)), .none)
+    }
+
+    // MARK: Phrases and lines (F3)
+
+    func testSelectionCap() {
+        XCTAssertEqual(SuggestCore.maxSelectionLength, 500)
+        XCTAssertTrue(SuggestCore.acceptsSelection(String(repeating: "й", count: 500)))
+        XCTAssertFalse(SuggestCore.acceptsSelection(String(repeating: "й", count: 501)))
+        XCTAssertTrue(SuggestCore.acceptsSelection("first line\nsecond line"))
+    }
+
+    func testAPickKeepsTheSelectionsOwnEdges() {
+        // The capture trims; the reader's raw selection keeps a selected line's break.
+        let text = "Intro.\nfirst lien\nsecond lien\nOutro."
+        let selected = "first lien\nsecond lien\n"
+        let context = SuggestCore.context(readings: [reading(text, selecting: selected)], selectedText: "first lien\nsecond lien")
+        XCTAssertEqual(context.around, SuggestCore.Context.Around(before: "Intro.\n", selected: selected, after: "Outro."))
+        var session = SuggestCore.Session()
+        session.selectionCaptured("first lien\nsecond lien")
+        session.rawSelectionRead(context.around?.selected)
+        let output = "{\"replacements\": [\"first line\\nsecond line\", \" first lien\\nsecond lien \"]}"
+        let items = SuggestCore.replacements(fromModelOutput: output, original: "first lien\nsecond lien")
+        XCTAssertEqual(items, ["first line\nsecond line"])
+        session.show(items)
+        XCTAssertEqual(session.handle(.pick(1)), .apply("first line\nsecond line\n"))
+        XCTAssertEqual(SuggestCore.pasteText("Claude", rawSelection: " Клод "), " Claude ")
+        XCTAssertEqual(SuggestCore.pasteText("Claude", rawSelection: nil), "Claude")
     }
 }
