@@ -123,11 +123,67 @@ final class SuggestTests: XCTestCase {
             XCTAssertEqual(session.handle(.pick(1)), .withheld(.noSelection), "selection: \(String(describing: selection))")
             XCTAssertEqual(session.phase, .closed)
         }
-        // One paste: the pick closes the list, so a second digit does nothing.
+        // One paste: the pick ends the list's picking (it only marks the line while it goes),
+        // so a second digit does nothing.
         var session = readySession(["Claude", "Cloud"])
         XCTAssertEqual(session.handle(.pick(1)), .apply("Claude"))
         XCTAssertEqual(session.handle(.pick(2)), .none)
+        XCTAssertEqual(session.phase, .picked(line: 1))
+    }
+
+    // MARK: Confirming a pick (UI polish)
+
+    private func applies(_ effects: [SuggestCore.Session.Effect]) -> Int {
+        effects.filter { if case .apply = $0 { return true } else { return false } }.count
+    }
+
+    func testOnePastePerPickEvenWithTwoDigitsInsideTheAnimation() {
+        var session = readySession(["Claude", "Cloud", "Clod"])
+        // A pick, then more digits before the list is gone (the fade lasts 0.2 s).
+        let effects = [session.handle(.pick(1)), session.handle(.pick(2)), session.handle(.pick(1)), session.handle(.pick(3))]
+        XCTAssertEqual(effects, [.apply("Claude"), .none, .none, .none])
+        XCTAssertEqual(applies(effects), 1)
+    }
+
+    func testDigitsDuringTheFadeAreIgnored() {
+        var session = readySession(["Claude", "Cloud"])
+        XCTAssertEqual(session.handle(.pick(2)), .apply("Cloud"))
+        XCTAssertEqual(session.phase, .picked(line: 2), "the list stays to mark line 2")
+        for key in [SuggestCore.Key.pick(1), .pick(2), .pick(9), .close] {
+            XCTAssertEqual(session.handle(key), .none, "\(key) during the fade")
+            XCTAssertEqual(session.phase, .picked(line: 2), "\(key) moved or ended the mark")
+        }
+        XCTAssertFalse(session.askForNewSet(), "no new set while the list goes")
+        // The feedback over, the run closes; keys still do nothing.
+        session.close()
         XCTAssertEqual(session.phase, .closed)
+        XCTAssertEqual(session.handle(.pick(1)), .none)
+    }
+
+    func testEscPastesNothing() {
+        // Esc closes at once from every phase, with no line marked and nothing pasted after.
+        let thinking = SuggestCore.Session()
+        let ready = readySession(["Claude", "Cloud"])
+        var loading = readySession(["Claude"])
+        XCTAssertTrue(loading.askForNewSet())
+        for (name, start) in [("thinking", thinking), ("ready", ready), ("loading a new set", loading)] {
+            var run = start
+            var effects = [run.handle(.close)]
+            XCTAssertEqual(effects, [.close], name)
+            XCTAssertEqual(run.phase, .closed, "\(name): no mark after Esc")
+            run.show(["Claude"])
+            effects += [run.handle(.pick(1)), run.handle(.pick(2)), run.handle(.close)]
+            XCTAssertEqual(applies(effects), 0, name)
+        }
+    }
+
+    func testPickFeedbackIsShortAndRespectsReduceMotion() {
+        let moving = SuggestCore.pickFeedback(reduceMotion: false)
+        XCTAssertTrue(moving.fades)
+        XCTAssertTrue((0.15...0.25).contains(moving.duration), "\(moving.duration) s")
+        let still = SuggestCore.pickFeedback(reduceMotion: true)
+        XCTAssertFalse(still.fades, "Reduce Motion: the mark only, no fade")
+        XCTAssertEqual(still.duration, moving.duration, "the mark shows as long either way")
     }
 
     // MARK: Context (F3: everything the reader returns, up to the cap)

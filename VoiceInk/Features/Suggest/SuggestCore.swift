@@ -98,6 +98,9 @@ enum SuggestCore {
             case thinking
             /// The numbered list is showing.
             case ready([String])
+            /// Line N was picked and its replacement is being pasted while the list marks the
+            /// line and goes away (`pickFeedback`). The list still owns its keys and ignores them.
+            case picked(line: Int)
             case closed
         }
 
@@ -106,7 +109,7 @@ enum SuggestCore {
             case none
             /// Close the list; change nothing.
             case close
-            /// Close the list and paste this text over the selection, once.
+            /// Paste this text over the selection, once, and confirm the pick while the list goes.
             case apply(String)
             /// Close the list; nothing is pasted (F1's gate refused the pick).
             case withheld(RewriteDeliveryGate.Withheld)
@@ -164,7 +167,8 @@ enum SuggestCore {
 
         mutating func handle(_ key: Key) -> Effect {
             switch (phase, key) {
-            case (.closed, _):
+            case (.closed, _), (.picked, _):
+                // After a pick every key is ignored until the list is gone: one paste per pick.
                 return .none
             case (_, .close):
                 phase = .closed
@@ -173,7 +177,6 @@ enum SuggestCore {
                 return .none
             case (.ready(let items), .pick(let line)):
                 guard items.indices.contains(line - 1) else { return .none }
-                phase = .closed
                 // The same guarded delivery as Rewrite (F1): paste only over a captured
                 // selection, and only a real result.
                 let choice = items[line - 1]
@@ -183,10 +186,29 @@ enum SuggestCore {
                     enhancedText: choice,
                     selectedText: selection
                 )
-                if let text = decision.text { return .apply(SuggestCore.pasteText(text, rawSelection: rawSelection)) }
+                if let text = decision.text {
+                    phase = .picked(line: line)
+                    return .apply(SuggestCore.pasteText(text, rawSelection: rawSelection))
+                }
+                phase = .closed
                 return .withheld(decision.withheld ?? .noRewrite)
             }
         }
+    }
+
+    // MARK: - Confirming a pick
+
+    /// How the list confirms a pick. The paste never waits for it: it starts at the pick, and the
+    /// list marks the picked line for `duration`, fading out over it unless Reduce Motion is on.
+    struct PickFeedback: Equatable {
+        let duration: TimeInterval
+        let fades: Bool
+    }
+
+    /// VoiceInk's own panel dismissal (`NotificationManager`, `AnnouncementManager`): 0.2 s, ease
+    /// in. Under Reduce Motion the marked line holds still for the same time, then the list hides.
+    static func pickFeedback(reduceMotion: Bool) -> PickFeedback {
+        PickFeedback(duration: 0.2, fades: !reduceMotion)
     }
 
     // MARK: - The request

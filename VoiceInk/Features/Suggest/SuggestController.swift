@@ -42,7 +42,7 @@ final class SuggestController {
     func run(modelContext: ModelContext, isRecorderVisible: Bool) {
         if var session {
             guard session.askForNewSet(), let asked else {
-                Self.logger.notice("Suggest ignored reason=already-thinking")
+                Self.logger.notice("Suggest ignored reason=\(session.phase == .thinking ? "already-thinking" : "closing", privacy: .public)")
                 return
             }
             self.session = session
@@ -105,14 +105,42 @@ final class SuggestController {
             notify("Suggest: no selected text. Nothing was pasted.")
         case .apply(let text):
             Self.logger.notice("Suggest apply key=\(String(describing: key), privacy: .public)")
-            finish()
+            // The paste starts now; the list confirms the pick alongside it.
+            let paste = CursorPaster.startPasteAtCursor(text)
             Task { @MainActor in
-                let outcome = await CursorPaster.startPasteAtCursor(text).value
+                let outcome = await paste.value
                 Self.logger.notice("Suggest pasted commandPosted=\(outcome.result.didPostPasteCommand, privacy: .public)")
                 if !outcome.result.didPostPasteCommand {
                     self.notify("Suggest: the replacement could not be pasted. Nothing was changed.")
                 }
             }
+            if case .picked(let line) = session.phase { confirmPick(line: line) }
+        }
+    }
+
+    /// Marks the picked line, then the list goes: VoiceInk's 0.2 s ease-in fade, or under Reduce
+    /// Motion the mark alone for the same time. The list keeps its keys until it is gone, and
+    /// `SuggestCore.Session` ignores them, so a digit in that time neither pastes nor types.
+    private func confirmPick(line: Int) {
+        model.picked = line
+        let feedback = SuggestCore.pickFeedback(reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        let done: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor in
+                guard let self, case .picked = self.session?.phase else { return }
+                Self.logger.notice("Suggest closed reason=picked")
+                self.finish()
+            }
+        }
+        if feedback.fades {
+            NSAnimationContext.runAnimationGroup(
+                { context in
+                    context.duration = feedback.duration
+                    context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                    panel.animator().alphaValue = 0
+                },
+                completionHandler: done)
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + feedback.duration, execute: done)
         }
     }
 
@@ -228,8 +256,10 @@ final class SuggestController {
         request = nil
         keyMonitor.stop(reason: "suggest-closed")
         panel.orderOut(nil)
+        panel.alphaValue = 1
         model.items = nil
         model.original = nil
+        model.picked = nil
         session = nil
         asked = nil
     }
@@ -242,6 +272,7 @@ final class SuggestController {
         switch phase {
         case .thinking: return "thinking"
         case .ready: return "ready"
+        case .picked: return "picked"
         case .closed: return "closed"
         }
     }
@@ -286,6 +317,8 @@ final class SuggestPanelModel: ObservableObject {
     @Published var original: String?
     /// nil while thinking.
     @Published var items: [String]?
+    /// The picked line (1-based) while the list confirms it.
+    @Published var picked: Int?
 }
 
 /// Floats over the app and never takes keyboard focus, so the draft keeps its focus and
@@ -339,15 +372,31 @@ final class SuggestPanel: NSPanel {
 /// correction?" (`AutoLearnSuggestionContent.swift`: 400 pt wide, 16 pt padding, 15 pt
 /// semibold title, 13 pt secondary original, `AutoLearnSuggestionSurface`), with the key
 /// chips of the Quick Add panel (`DictionaryQuickAddPanel.swift`, `QuickPanelControls.swift`).
+///
+/// Two columns: the title, the original, the line badges and the footer start at the content
+/// edge; each option's text, wrapped lines included, starts one badge and one gap further in.
+/// A badge is centred on the middle of its option's first line, and so is the "esc" chip on
+/// the title's. A picked line takes VoiceInk's selected-row look (`AppTheme.Selection`, the
+/// green check of `ModePopover` and `EnhancementPromptPopover`).
 struct SuggestPanelView: View {
     @ObservedObject var model: SuggestPanelModel
 
+    /// The AppKit twins of the title and option fonts below, for their cap heights.
+    private static let titleMetrics = NSFont.systemFont(ofSize: 15, weight: .semibold)
+    private static let optionMetrics = NSFont.systemFont(ofSize: 15, weight: .medium)
+    private static let badgeWidth: CGFloat = 22
+    private static let badgeGap: CGFloat = 10
+    private static let checkWidth: CGFloat = 14
+    /// How far a line's highlight reaches past the columns, sideways and up and down.
+    private static let rowInset = CGSize(width: 8, height: 4)
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .suggestFirstLine) {
                 Text(verbatim: "Suggestions")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.primary)
+                    .firstLineMiddle(Self.titleMetrics)
                 Spacer(minLength: 12)
                 SuggestKeyChip(text: "esc")
             }
@@ -360,26 +409,16 @@ struct SuggestPanelView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let items = model.items {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            SuggestKeyChip(text: "\(index + 1)")
-                            Text(verbatim: item)
-                                .font(.system(size: 15, weight: .medium))
-                                .foregroundStyle(.primary)
-                                .lineLimit(8)
-                                .truncationMode(.tail)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(Text(verbatim: "\(index + 1) \(item)"))
-                        .accessibilityIdentifier("suggest-item-\(index + 1)")
+                        row(line: index + 1, text: item)
                     }
                 }
-                HStack(spacing: 6) {
+                .padding(.horizontal, -Self.rowInset.width)
+                .padding(.vertical, -Self.rowInset.height)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(verbatim: "Paste")
                     SuggestKeyChip(text: items.count == 1 ? "1" : "1–\(items.count)")
-                    Text(verbatim: "paste")
                     Text(verbatim: "·")
                     Text(verbatim: "Suggest again for other options")
                 }
@@ -403,20 +442,74 @@ struct SuggestPanelView: View {
         .modifier(AutoLearnSuggestionSurface())
         .fixedSize(horizontal: false, vertical: true)
     }
+
+    private func row(line: Int, text: String) -> some View {
+        let isPicked = model.picked == line
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        return HStack(alignment: .suggestFirstLine, spacing: Self.badgeGap) {
+            SuggestKeyChip(text: "\(line)", width: Self.badgeWidth)
+            Text(verbatim: text)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(8)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .firstLineMiddle(Self.optionMetrics)
+            // Always laid out, so marking a line never reflows its text.
+            Image(systemName: "checkmark")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(AppTheme.Status.positive)
+                .frame(width: Self.checkWidth)
+                .opacity(isPicked ? 1 : 0)
+        }
+        .padding(.horizontal, Self.rowInset.width)
+        .padding(.vertical, Self.rowInset.height)
+        .background {
+            if isPicked {
+                shape.fill(AppTheme.Selection.fill)
+                    .overlay(shape.strokeBorder(AppTheme.Selection.border, lineWidth: 1))
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: "\(line) \(text)"))
+        .accessibilityAddTraits(isPicked ? .isSelected : [])
+        .accessibilityIdentifier("suggest-item-\(line)")
+    }
 }
 
-/// The key hint of the Quick Add panel's "↵" and "esc" chips.
+private extension VerticalAlignment {
+    private enum SuggestFirstLine: AlignmentID {
+        static func defaultValue(in context: ViewDimensions) -> CGFloat { context[VerticalAlignment.center] }
+    }
+
+    /// The middle of a text's first line (`firstLineMiddle`); any other view meets it with its centre.
+    static let suggestFirstLine = VerticalAlignment(SuggestFirstLine.self)
+}
+
+private extension View {
+    /// Puts `suggestFirstLine` half a cap height above the first baseline: the optical middle of
+    /// the first line, whatever the line height or the number of lines.
+    func firstLineMiddle(_ font: NSFont) -> some View {
+        alignmentGuide(.suggestFirstLine) { $0[.firstTextBaseline] - font.capHeight / 2 }
+    }
+}
+
+/// The key hint of the Quick Add panel's "↵" and "esc" chips. A line badge has a fixed width,
+/// so 1 to 9 are all the same size.
 private struct SuggestKeyChip: View {
     let text: String
+    var width: CGFloat?
 
     var body: some View {
         Text(verbatim: text)
             .font(.system(size: 11, weight: .medium, design: .rounded))
             .monospacedDigit()
             .foregroundStyle(AppTheme.Text.secondary)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, width == nil ? 6 : 0)
             .padding(.vertical, 3)
-            .frame(minWidth: 22)
+            .frame(minWidth: width == nil ? 22 : nil)
+            .frame(width: width)
             .background(AppTheme.Surface.controlActive, in: RoundedRectangle(cornerRadius: 5))
     }
 }
