@@ -65,6 +65,19 @@ class RecordingShortcutManager: ObservableObject {
         }
     }
 
+    /// Hybrid mode: a press shorter than this keeps recording hands-free;
+    /// a hold of at least this long stops recording on release.
+    enum HybridHoldThreshold {
+        static let userDefaultsKey = "hybridHoldThreshold"
+        static let defaultValue: TimeInterval = 0.3
+        static let options: [TimeInterval] = [0.2, 0.25, 0.3, 0.4, 0.5]
+
+        static var current: TimeInterval {
+            let stored = UserDefaults.standard.double(forKey: userDefaultsKey)
+            return stored > 0 ? stored : defaultValue
+        }
+    }
+
     enum ShortcutSelection: String, CaseIterable {
         case none = "none"
         case custom = "custom"
@@ -362,7 +375,6 @@ final class RecordingShortcutModeHandler {
     private var stateRevision: UInt64 = 0
     private var pendingDoubleTapReleaseTimes: [ShortcutAction: TimeInterval] = [:]
 
-    private let hybridPressThreshold: TimeInterval = 0.5
     private let doubleTapThreshold: TimeInterval = 0.7
 
     init(
@@ -574,15 +586,17 @@ final class RecordingShortcutModeHandler {
             }
 
         case .hybrid:
-            if pressDuration >= hybridPressThreshold && recordingState() == .recording {
+            let holdThreshold = RecordingShortcutManager.HybridHoldThreshold.current
+            let timing = "duration=\(String(format: "%.3f", pressDuration)) threshold=\(String(format: "%.3f", holdThreshold))"
+            if pressDuration >= holdThreshold && recordingState() == .recording {
                 guard canHandleShortcutAction() else {
                     logDecision(action, phase: "recording", result: "ignored-engine-state")
                     return
                 }
-                logDecision(action, phase: "up", result: "stop-recording", detail: "mode=hybrid duration=\(String(format: "%.3f", pressDuration))")
+                logDecision(action, phase: "up", result: "stop-recording", detail: "mode=hybrid \(timing)")
                 await toggleRecorderPanel(modeId)
             } else {
-                logDecision(action, phase: "up", result: "hands-free", detail: "mode=hybrid duration=\(String(format: "%.3f", pressDuration))")
+                logDecision(action, phase: "up", result: "hands-free", detail: "mode=hybrid \(timing)")
                 isHandsFreeRecording = true
             }
 

@@ -26,6 +26,8 @@ struct SettingsView: View {
         .systemValue
     @AppStorage(RecorderDisplaySettingsKeys.showLiveTranscript) private var showLiveTranscript = true
     @AppStorage(FinishAndSendSettings.key) private var finishAndSendKey = FinishAndSendKey.none.rawValue
+    @AppStorage(RecordingShortcutManager.HybridHoldThreshold.userDefaultsKey) private var hybridHoldThreshold =
+        RecordingShortcutManager.HybridHoldThreshold.defaultValue
     @State private var showResetOnboardingAlert = false
     @State private var showLanguageRestartAlert = false
     @State private var cancelRecordingShortcutRecorderResetID = 0
@@ -72,6 +74,22 @@ struct SettingsView: View {
                 if recordingShortcutManager.secondaryRecordingShortcut == .none {
                     Button("Add Second Shortcut") {
                         withAnimation { recordingShortcutManager.secondaryRecordingShortcut = .custom }
+                    }
+                }
+
+                if recordingShortcutManager.primaryRecordingShortcutMode == .hybrid
+                    || (recordingShortcutManager.secondaryRecordingShortcut != .none
+                        && recordingShortcutManager.secondaryRecordingShortcutMode == .hybrid)
+                {
+                    Picker(selection: $hybridHoldThreshold) {
+                        ForEach(RecordingShortcutManager.HybridHoldThreshold.options, id: \.self) { value in
+                            Text(verbatim: "\(Int((value * 1000).rounded()))ms").tag(value)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Hybrid Hold Threshold")
+                            InfoTip("A shorter press keeps recording hands-free. Holding at least this long records until you release the shortcut.")
+                        }
                     }
                 }
 
