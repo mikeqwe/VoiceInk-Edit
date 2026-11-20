@@ -338,4 +338,106 @@ final class SuggestTests: XCTestCase {
         XCTAssertEqual(SuggestCore.pasteText("Claude", rawSelection: " Клод "), " Claude ")
         XCTAssertEqual(SuggestCore.pasteText("Claude", rawSelection: nil), "Claude")
     }
+
+    // MARK: Where the list opens (F4)
+
+    /// A 1440 × 900 screen with a 25 pt menu bar: visible frame y 0…875.
+    private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+    private let visible = CGRect(x: 0, y: 0, width: 1440, height: 875)
+    private let list = CGSize(width: 300, height: 200)
+
+    func testTheListOpensJustUnderTheSelectionAtItsLeftEdge() {
+        // A word on a line whose bottom is 600 pt up: the list's top sits panelGap under it.
+        let word = CGRect(x: 400, y: 600, width: 40, height: 18)
+        let placed = SuggestCore.panelOrigin(size: list, anchor: word, visible: visible)
+        XCTAssertEqual(placed.side, .below)
+        XCTAssertEqual(placed.origin.x, 400, "left edge on the selection's left edge")
+        // The mockup's gap: a 26 px top under a 22 px line.
+        XCTAssertEqual(placed.origin.y + list.height, 596, "top 4 pt under the selection")
+        // Three selected lines: the anchor spans them, so the list goes under the last one.
+        let lines = CGRect(x: 120, y: 500, width: 700, height: 54)
+        let underLines = SuggestCore.panelOrigin(size: list, anchor: lines, visible: visible)
+        XCTAssertEqual(underLines.side, .below)
+        XCTAssertEqual(underLines.origin.y + list.height, 496)
+        XCTAssertEqual(underLines.origin.x, 120)
+    }
+
+    func testTheListFlipsAboveWhenThereIsNoRoomBelow() {
+        let nearBottom = CGRect(x: 400, y: 120, width: 60, height: 18)
+        let placed = SuggestCore.panelOrigin(size: list, anchor: nearBottom, visible: visible)
+        XCTAssertEqual(placed.side, .above)
+        XCTAssertEqual(placed.origin.y, 142, "bottom 4 pt over the selection")
+        // Exactly enough room below still goes below.
+        let justFits = CGRect(x: 400, y: 200 + SuggestCore.panelGap, width: 60, height: 18)
+        XCTAssertEqual(SuggestCore.panelOrigin(size: list, anchor: justFits, visible: visible).side, .below)
+    }
+
+    func testTheListStaysWholeOnTheVisibleFrame() {
+        // Selection at the right edge: the list moves left to stay on screen.
+        let right = CGRect(x: 1400, y: 600, width: 30, height: 18)
+        let placedRight = SuggestCore.panelOrigin(size: list, anchor: right, visible: visible)
+        XCTAssertEqual(placedRight.origin.x, 1440 - 300)
+        // A tall selection with room on neither side: the side with more room, kept inside.
+        let tall = CGRect(x: 10, y: 150, width: 600, height: 650)
+        let placedTall = SuggestCore.panelOrigin(size: list, anchor: tall, visible: visible)
+        XCTAssertEqual(placedTall.side, .below, "150 below against 75 above")
+        XCTAssertEqual(placedTall.origin.y, 0, "clamped to the visible bottom")
+        // Off the left edge of a second screen to the right of the first.
+        let second = CGRect(x: 1440, y: 0, width: 1920, height: 1055)
+        let atLeft = CGRect(x: 1430, y: 700, width: 30, height: 18)
+        XCTAssertEqual(SuggestCore.panelOrigin(size: list, anchor: atLeft, visible: second).origin.x, 1440)
+        // Every result lies inside the visible frame.
+        for anchor in [right, tall, CGRect(x: -50, y: 870, width: 20, height: 18), CGRect(x: 700, y: 2, width: 20, height: 18)] {
+            let origin = SuggestCore.panelOrigin(size: list, anchor: anchor, visible: visible).origin
+            XCTAssertTrue(visible.contains(CGRect(origin: origin, size: list)), "\(anchor) → \(origin)")
+        }
+    }
+
+    func testWithNoUsableBoundsTheListOpensWhereItAlwaysDid() {
+        let placed = SuggestCore.panelOrigin(size: list, anchor: nil, visible: visible)
+        XCTAssertEqual(placed.side, .fallback)
+        XCTAssertEqual(placed.origin, CGPoint(x: 720 - 150, y: 875 - 875.0 / 4 - 200))
+        // Rectangles an app reports when it has no text bounds are not anchors.
+        let screens = [screen, CGRect(x: 1440, y: 0, width: 1920, height: 1080)]
+        XCTAssertNil(SuggestCore.screenHolding(.zero, screenFrames: screens), "zero rectangle")
+        XCTAssertNil(SuggestCore.screenHolding(CGRect(x: 10, y: 10, width: 40, height: 0), screenFrames: screens), "no height")
+        XCTAssertNil(SuggestCore.screenHolding(CGRect(x: -900, y: 10, width: 40, height: 18), screenFrames: screens), "off every screen")
+        XCTAssertNil(SuggestCore.screenHolding(CGRect(x: CGFloat.nan, y: 10, width: 40, height: 18), screenFrames: screens), "not finite")
+        // A caret (zero width) is an anchor; the screen holding most of a rectangle wins.
+        XCTAssertEqual(SuggestCore.screenHolding(CGRect(x: 300, y: 300, width: 0, height: 18), screenFrames: screens), 0)
+        XCTAssertEqual(SuggestCore.screenHolding(CGRect(x: 1430, y: 300, width: 60, height: 18), screenFrames: screens), 1)
+    }
+
+    func testAccessibilityRectanglesFlipToAppKit() {
+        // Top-left origin: a line 100 pt from the top of a 900 pt primary screen.
+        let ax = CGRect(x: 400, y: 100, width: 40, height: 18)
+        XCTAssertEqual(SuggestCore.appKitRect(fromAccessibility: ax, primaryScreenMaxY: 900), CGRect(x: 400, y: 782, width: 40, height: 18))
+    }
+
+    // MARK: What an option changes (F4, 3b)
+
+    private func lit(_ option: String, _ original: String) -> [String] {
+        SuggestCore.segments(of: option, original: original).filter(\.changed).map(\.text)
+    }
+
+    func testChangedWordsAreLitForAMultiWordSelection() {
+        let original = "The migration was finished yesterday but we still seeing some errors on the old endpoints, mostly timeouts, and I think we should keep the fallback for one more week before removing it."
+        let option = "The migration finished yesterday, but we are still seeing some errors on the old endpoints, mostly timeouts. I think we should keep the fallback for one more week before removing it."
+        // Only what the option adds is lit: "finished" and "I" are in the original too, and the
+        // dropped "was" and "and" have no text in the option to light.
+        XCTAssertEqual(lit(option, original), [",", "are", "."])
+        let segments = SuggestCore.segments(of: option, original: original)
+        XCTAssertEqual(segments.map(\.text).joined(), option, "the runs give the option back unchanged")
+        XCTAssertEqual(lit("we were going to ship it tomorrow", "we was going to ship it tomorrow"), ["were"])
+        XCTAssertEqual(lit("Migration done yesterday", "The migration was finished yesterday"), ["Migration done"],
+                       "a space between two lit words is lit with them")
+        XCTAssertEqual(lit("first line\nsecond line", "first lien\nsecond lien"), ["line", "line"])
+        XCTAssertEqual(lit("we're shipping", "we are shipping"), ["we're"], "an apostrophe stays inside its word")
+    }
+
+    func testNoMarkingForASingleWordSelection() {
+        XCTAssertEqual(SuggestCore.segments(of: "Claude Code", original: "Клод"), [SuggestCore.Segment(text: "Claude Code", changed: false)])
+        XCTAssertEqual(SuggestCore.segments(of: "GitHub", original: " github. "), [SuggestCore.Segment(text: "GitHub", changed: false)])
+        XCTAssertEqual(lit("Claude Code", "Клод"), [])
+    }
 }

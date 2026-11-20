@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Fork F2: Suggest. Select a word or a short phrase, press the Suggest shortcut, and
@@ -7,7 +8,8 @@ import Foundation
 ///
 /// This file holds the decisions: what counts as a replacement, which keys the list
 /// owns while it shows, and when a pick may be pasted. `SuggestController.swift` does
-/// the I/O. Foundation only: `Tests/Suggest` runs it with `swift test`.
+/// the I/O. Fork F4: where the list opens, and what each option changes. Foundation and
+/// CoreGraphics geometry only: `Tests/Suggest` runs it with `swift test`.
 enum SuggestCore {
     static let maxReplacements = 5
 
@@ -209,6 +211,176 @@ enum SuggestCore {
     /// in. Under Reduce Motion the marked line holds still for the same time, then the list hides.
     static func pickFeedback(reduceMotion: Bool) -> PickFeedback {
         PickFeedback(duration: 0.2, fades: !reduceMotion)
+    }
+
+    // MARK: - Where the list opens
+
+    /// Which side of the selection the list took. `fallback`: no usable selection rectangle, so
+    /// the list opens where it always did, centred on the screen, its top a quarter down.
+    enum PanelSide: String, Equatable, Sendable {
+        case below, above, fallback
+    }
+
+    /// Space between the selected text and the list.
+    static let panelGap: CGFloat = 4
+
+    /// An Accessibility rectangle (global, top-left origin at the primary screen's top) in AppKit
+    /// screen coordinates (bottom-left origin at the primary screen's bottom).
+    static func appKitRect(fromAccessibility rect: CGRect, primaryScreenMaxY: CGFloat) -> CGRect {
+        CGRect(x: rect.minX, y: primaryScreenMaxY - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    /// The index of the screen that holds `rect` (AppKit coordinates): the one with the largest
+    /// overlap. Nil for a rectangle no app could have drawn text in: empty height, not finite, or
+    /// on no screen. Electron editors report a zero rectangle when they have no text bounds.
+    static func screenHolding(_ rect: CGRect, screenFrames: [CGRect]) -> Int? {
+        guard rect.height > 0, rect.width >= 0,
+            [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite)
+        else { return nil }
+        let probe = rect.width > 0 ? rect : rect.insetBy(dx: -0.5, dy: 0)
+        var best: (index: Int, area: CGFloat)?
+        for (index, frame) in screenFrames.enumerated() {
+            let overlap = frame.intersection(probe)
+            guard !overlap.isNull else { continue }
+            let area = overlap.width * overlap.height
+            if area > 0, area > (best?.area ?? 0) { best = (index, area) }
+        }
+        return best?.index
+    }
+
+    /// Where a list of `size` opens for a selection at `anchor` on a screen whose visible frame is
+    /// `visible` (all AppKit coordinates). Just under the selection, its left edge on the
+    /// selection's left edge; for a multi-line selection `anchor` spans the lines, so the list goes
+    /// under the last one. With no room below it goes above; with room on neither side, on the side
+    /// with more room. Always kept whole inside `visible`. With no anchor: `fallbackOrigin`.
+    static func panelOrigin(size: CGSize, anchor: CGRect?, visible: CGRect) -> (origin: CGPoint, side: PanelSide) {
+        guard let anchor else { return (fallbackOrigin(size: size, visible: visible), .fallback) }
+        let x = clamp(anchor.minX, visible.minX, visible.maxX - size.width)
+        let below = anchor.minY - panelGap - size.height
+        let above = anchor.maxY + panelGap
+        let side: PanelSide
+        if below >= visible.minY {
+            side = .below
+        } else if above + size.height <= visible.maxY {
+            side = .above
+        } else {
+            side = anchor.minY - visible.minY >= visible.maxY - anchor.maxY ? .below : .above
+        }
+        let y = clamp(side == .below ? below : above, visible.minY, visible.maxY - size.height)
+        return (CGPoint(x: x, y: y), side)
+    }
+
+    /// Where the list opened before F4: centred on the screen, its top a quarter down.
+    static func fallbackOrigin(size: CGSize, visible: CGRect) -> CGPoint {
+        CGPoint(x: visible.midX - size.width / 2, y: visible.maxY - visible.height / 4 - size.height)
+    }
+
+    /// `value` inside `low…high`; `low` wins when the range is empty (a list wider than the screen
+    /// keeps its left edge on screen).
+    private static func clamp(_ value: CGFloat, _ low: CGFloat, _ high: CGFloat) -> CGFloat {
+        max(low, min(value, high))
+    }
+
+    // MARK: - What an option changes
+
+    /// One run of an option's text, marked when it differs from the original.
+    struct Segment: Equatable, Sendable {
+        let text: String
+        let changed: Bool
+    }
+
+    /// The option split into runs, with the words and punctuation that are not in the original lit.
+    /// A local word-level diff: the longest common subsequence of the two texts' words and
+    /// punctuation marks, compared exactly. Spaces between two lit tokens are lit with them, other
+    /// spaces are not. A one-word original gives the option as one unmarked run: the whole word is
+    /// the change, and marking it says nothing.
+    static func segments(of option: String, original: String) -> [Segment] {
+        let originalTokens = tokens(of: original).filter { !$0.isSpace }
+        guard originalTokens.filter(\.isWord).count >= 2 else {
+            return option.isEmpty ? [] : [Segment(text: option, changed: false)]
+        }
+        let optionTokens = tokens(of: option)
+        let words = optionTokens.indices.filter { !optionTokens[$0].isSpace }
+        let kept = commonSubsequence(words.map { optionTokens[$0].text }, originalTokens.map(\.text))
+        var changed = [Bool](repeating: false, count: optionTokens.count)
+        for (position, index) in words.enumerated() where !kept.contains(position) {
+            changed[index] = true
+        }
+        // A space between two lit tokens joins them into one lit run.
+        for index in optionTokens.indices where optionTokens[index].isSpace {
+            changed[index] = index > 0 && index < optionTokens.count - 1 && changed[index - 1] && changed[index + 1]
+        }
+        var result: [Segment] = []
+        for (index, token) in optionTokens.enumerated() {
+            if let last = result.last, last.changed == changed[index] {
+                result[result.count - 1] = Segment(text: last.text + token.text, changed: last.changed)
+            } else {
+                result.append(Segment(text: token.text, changed: changed[index]))
+            }
+        }
+        return result
+    }
+
+    private struct Token {
+        let text: String
+        let isWord: Bool
+        let isSpace: Bool
+    }
+
+    /// Words (letters, digits, and an apostrophe inside a word), single punctuation marks and runs
+    /// of whitespace, in order; joined back they give the text unchanged.
+    private static func tokens(of text: String) -> [Token] {
+        var result: [Token] = []
+        var current = ""
+        var currentKind = 0  // 0 none, 1 word, 2 space
+        func flush() {
+            if !current.isEmpty { result.append(Token(text: current, isWord: currentKind == 1, isSpace: currentKind == 2)) }
+            current = ""
+            currentKind = 0
+        }
+        let characters = Array(text)
+        for (index, character) in characters.enumerated() {
+            let isWordCharacter = character.isLetter || character.isNumber
+                || ((character == "'" || character == "’") && currentKind == 1
+                    && index + 1 < characters.count && characters[index + 1].isLetter)
+            let kind = isWordCharacter ? 1 : character.isWhitespace ? 2 : 3
+            if kind == 3 {
+                flush()
+                result.append(Token(text: String(character), isWord: false, isSpace: false))
+            } else {
+                if kind != currentKind { flush() }
+                currentKind = kind
+                current.append(character)
+            }
+        }
+        flush()
+        return result
+    }
+
+    /// Positions in `a` of one longest common subsequence of `a` and `b`.
+    private static func commonSubsequence(_ a: [String], _ b: [String]) -> Set<Int> {
+        guard !a.isEmpty, !b.isEmpty else { return [] }
+        var lengths = [[Int]](repeating: [Int](repeating: 0, count: b.count + 1), count: a.count + 1)
+        for i in stride(from: a.count - 1, through: 0, by: -1) {
+            for j in stride(from: b.count - 1, through: 0, by: -1) {
+                lengths[i][j] = a[i] == b[j] ? lengths[i + 1][j + 1] + 1 : max(lengths[i + 1][j], lengths[i][j + 1])
+            }
+        }
+        var kept = Set<Int>()
+        var i = 0
+        var j = 0
+        while i < a.count, j < b.count {
+            if a[i] == b[j] {
+                kept.insert(i)
+                i += 1
+                j += 1
+            } else if lengths[i + 1][j] >= lengths[i][j + 1] {
+                i += 1
+            } else {
+                j += 1
+            }
+        }
+        return kept
     }
 
     // MARK: - The request

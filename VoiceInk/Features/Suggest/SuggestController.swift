@@ -20,6 +20,8 @@ final class SuggestController {
     private var request: Task<Void, Never>?
     /// The run's request, kept for a new set: the same selection, context and model.
     private var asked: Request?
+    /// Counts runs, so a selection rectangle read for an earlier run is never applied to this one.
+    private var openGeneration = 0
 
     private struct Request {
         let selection: String
@@ -205,8 +207,8 @@ final class SuggestController {
             }
             session?.show(items)
             model.items = items
-            panel.fitToContent()
-            Self.logger.notice("Suggest ready count=\(items.count, privacy: .public) seconds=\(Date().timeIntervalSince(started), format: .fixed(precision: 2), privacy: .public)")
+            let side = panel.fitToContent()
+            Self.logger.notice("Suggest ready count=\(items.count, privacy: .public) seconds=\(Date().timeIntervalSince(started), format: .fixed(precision: 2), privacy: .public) side=\(side.rawValue, privacy: .public)")
         } catch {
             guard isCurrent else { return }
             fail("Suggest failed: \(error.localizedDescription) Nothing was changed.", reason: "request-error")
@@ -228,10 +230,46 @@ final class SuggestController {
 
     // MARK: - Panel and notices
 
+    /// The list shows at the selected text (F4). Its keys are already taken; the selection's
+    /// rectangle is read off the main thread, and the list shows as soon as it arrives or the budget
+    /// (`SuggestAnchorReader.budget`) ends, whichever is first. Past the budget it shows where it
+    /// always did, and a late rectangle is dropped.
     private func showPanel() {
+        openGeneration &+= 1
+        let generation = openGeneration
+        let started = ProcessInfo.processInfo.systemUptime
+        panel.setAnchor(nil)
         panel.fitToContent()
-        panel.placeOnActiveScreen()
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        guard let processID = NSWorkspace.shared.frontmostApplication?.processIdentifier, processID != ownPID else {
+            reveal(generation: generation, reading: .none(reason: "no-frontmost-app"), started: started)
+            return
+        }
+        SuggestAnchorReader.queue.async { [weak self] in
+            let reading = SuggestAnchorReader.read(processID: processID)
+            Task { @MainActor in self?.reveal(generation: generation, reading: reading, started: started) }
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(SuggestAnchorReader.budget * 1_000_000_000))
+            self?.reveal(generation: generation, reading: .none(reason: "budget"), started: started)
+        }
+    }
+
+    /// The first of the reading and the budget for this run shows the list; the other does nothing.
+    private func reveal(generation: Int, reading: SuggestAnchorReader.Reading, started: TimeInterval) {
+        guard generation == openGeneration, session != nil, !panel.isVisible else {
+            if generation == openGeneration, reading.source != "none:budget" {
+                Self.logger.notice("Suggest anchor late source=\(reading.source, privacy: .public) readMs=\(reading.milliseconds, privacy: .public)")
+            }
+            return
+        }
+        var anchor: CGRect?
+        if case .rect(let rect) = reading.result { anchor = rect }
+        panel.setAnchor(anchor)
+        let side = panel.fitToContent()
         panel.orderFrontRegardless()
+        let waited = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
+        Self.logger.notice("Suggest anchor source=\(reading.source, privacy: .public) readMs=\(reading.milliseconds, privacy: .public) shownAfterMs=\(waited, privacy: .public) side=\(side.rawValue, privacy: .public)")
     }
 
     /// A first request that fails closes the list. A new set that fails shows the previous
@@ -252,6 +290,7 @@ final class SuggestController {
     }
 
     private func finish() {
+        openGeneration &+= 1
         request?.cancel()
         request = nil
         keyMonitor.stop(reason: "suggest-closed")
@@ -311,6 +350,97 @@ enum SuggestContextReader {
     }
 }
 
+/// Reads where the selected text is on screen, so the list can open there (F4). Read-only
+/// Accessibility queries, each under a short messaging timeout. It never turns on an app's web
+/// accessibility, so an Electron editor that has not exposed its text gives no rectangle.
+/// Order: the bounds of the selected range; then the caret (a zero-length range at the
+/// selection's end, or its last character); then the bounds of the selected text-marker range
+/// (WebKit and Chromium web text). Rectangles are in Accessibility coordinates (top-left origin).
+enum SuggestAnchorReader {
+    static let queue = DispatchQueue(label: "com.prakashjoshipax.voiceink.suggest-anchor", qos: .userInteractive)
+    /// How long the list waits for the rectangle before it shows where it always did. The keys
+    /// are taken before the wait, so the shortcut never waits on it.
+    static let budget: TimeInterval = 0.1
+    private static let messagingTimeout: Float = 0.05
+
+    struct Reading: Sendable {
+        enum Result: Sendable {
+            case rect(CGRect)
+            case none
+        }
+        let result: Result
+        /// `bounds`, `caret`, `marker-bounds`, or `none:<reason>`.
+        let source: String
+        let milliseconds: Int
+
+        static func none(reason: String) -> Reading { Reading(result: .none, source: "none:\(reason)", milliseconds: 0) }
+    }
+
+    static func read(processID: pid_t) -> Reading {
+        let started = ProcessInfo.processInfo.systemUptime
+        func done(_ rect: CGRect?, _ source: String) -> Reading {
+            let milliseconds = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
+            guard let rect else { return Reading(result: .none, source: "none:\(source)", milliseconds: milliseconds) }
+            return Reading(result: .rect(rect), source: source, milliseconds: milliseconds)
+        }
+        guard AXIsProcessTrusted() else { return done(nil, "no-accessibility") }
+        let app = AXUIElementCreateApplication(processID)
+        AXUIElementSetMessagingTimeout(app, messagingTimeout)
+        guard let element = AccessibilityFocusReader.focusedElement(in: app).element else {
+            return done(nil, "no-focused-element")
+        }
+        AXUIElementSetMessagingTimeout(element, messagingTimeout)
+        if let range = selectedRange(of: element) {
+            let end = range.location + range.length
+            if range.length > 0, let rect = bounds(of: range, in: element) { return done(rect, "bounds") }
+            if let rect = bounds(of: CFRange(location: end, length: 0), in: element) { return done(rect, "caret") }
+            if range.length > 0, let rect = bounds(of: CFRange(location: end - 1, length: 1), in: element) {
+                return done(rect, "caret")
+            }
+        }
+        if let rect = markerBounds(in: element) { return done(rect, "marker-bounds") }
+        return done(nil, "no-text-bounds")
+    }
+
+    private static func selectedRange(of element: AXUIElement) -> CFRange? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value) == .success,
+            let value, CFGetTypeID(value) == AXValueGetTypeID()
+        else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(unsafeBitCast(value, to: AXValue.self), .cfRange, &range), range.location >= 0, range.length >= 0
+        else { return nil }
+        return range
+    }
+
+    private static func bounds(of range: CFRange, in element: AXUIElement) -> CGRect? {
+        var range = range
+        guard let parameter = AXValueCreate(.cfRange, &range) else { return nil }
+        return rect(element, kAXBoundsForRangeParameterizedAttribute as CFString, parameter)
+    }
+
+    private static func markerBounds(in element: AXUIElement) -> CGRect? {
+        var markers: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, "AXSelectedTextMarkerRange" as CFString, &markers) == .success,
+            let markers
+        else { return nil }
+        return rect(element, "AXBoundsForTextMarkerRange" as CFString, markers)
+    }
+
+    /// A rectangle a parameterized attribute returns, if it could hold text: finite, with height.
+    private static func rect(_ element: AXUIElement, _ attribute: CFString, _ parameter: CFTypeRef) -> CGRect? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(element, attribute, parameter, &value) == .success,
+            let value, CFGetTypeID(value) == AXValueGetTypeID()
+        else { return nil }
+        var rect = CGRect.zero
+        guard AXValueGetValue(unsafeBitCast(value, to: AXValue.self), .cgRect, &rect), rect.height > 0,
+            [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite)
+        else { return nil }
+        return rect
+    }
+}
+
 @MainActor
 final class SuggestPanelModel: ObservableObject {
     /// The selected text, once captured.
@@ -329,6 +459,8 @@ final class SuggestPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     private let hostingView: NSHostingView<SuggestPanelView>
+    /// The selected text's rectangle in Accessibility coordinates, when it was read in time.
+    private var anchor: CGRect?
 
     init(model: SuggestPanelModel) {
         hostingView = NSHostingView(rootView: SuggestPanelView(model: model))
@@ -352,78 +484,83 @@ final class SuggestPanel: NSPanel {
         setAccessibilityIdentifier("voiceink-suggest-panel")
     }
 
-    func fitToContent() {
-        hostingView.layoutSubtreeIfNeeded()
-        let size = hostingView.fittingSize
-        let top = frame.maxY
-        setFrame(NSRect(x: frame.minX, y: top - size.height, width: size.width, height: size.height), display: true)
+    func setAnchor(_ accessibilityRect: CGRect?) {
+        anchor = accessibilityRect
     }
 
-    func placeOnActiveScreen() {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
-        let origin = NSPoint(x: visible.midX - frame.width / 2, y: visible.maxY - visible.height / 4 - frame.height)
-        setFrameOrigin(origin)
+    /// Sizes the panel to its content and places it at the anchor (`SuggestCore.panelOrigin`):
+    /// under the selection, or above it when there is no room, whole on the screen that holds it.
+    /// With no anchor, or one on no screen, it goes where it always did on the mouse's screen.
+    @discardableResult
+    func fitToContent() -> SuggestCore.PanelSide {
+        hostingView.layoutSubtreeIfNeeded()
+        let size = hostingView.fittingSize
+        let screens = NSScreen.screens
+        var placedAnchor: CGRect?
+        var visible: CGRect?
+        if let anchor, let primary = screens.first {
+            let rect = SuggestCore.appKitRect(fromAccessibility: anchor, primaryScreenMaxY: primary.frame.maxY)
+            if let index = SuggestCore.screenHolding(rect, screenFrames: screens.map(\.frame)) {
+                placedAnchor = rect
+                visible = screens[index].visibleFrame
+            }
+        }
+        if visible == nil {
+            let mouse = NSEvent.mouseLocation
+            visible = (screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main)?.visibleFrame
+        }
+        guard let visible else {
+            setContentSize(size)
+            return .fallback
+        }
+        let placed = SuggestCore.panelOrigin(size: size, anchor: placedAnchor, visible: visible)
+        setFrame(NSRect(origin: placed.origin, size: size), display: true)
+        return placed.side
     }
 }
 
-/// Styled after VoiceInk's own non-activating suggestion panel, AutoLearn's "Learn this
-/// correction?" (`AutoLearnSuggestionContent.swift`: 400 pt wide, 16 pt padding, 15 pt
-/// semibold title, 13 pt secondary original, `AutoLearnSuggestionSurface`), with the key
-/// chips of the Quick Add panel (`DictionaryQuickAddPanel.swift`, `QuickPanelControls.swift`).
-///
-/// Two columns: the title, the original, the line badges and the footer start at the content
-/// edge; each option's text, wrapped lines included, starts one badge and one gap further in.
-/// A badge is centred on the middle of its option's first line, and so is the "esc" chip on
-/// the title's. A picked line takes VoiceInk's selected-row look (`AppTheme.Selection`, the
-/// green check of `ModePopover` and `EnhancementPromptPopover`).
+/// Look A (F4, owner's choice from `design/suggest-panel/variants.html`), with 3b for long
+/// fragments (`variant-a-sizes.html`). No title: the top line holds the original, then a muted
+/// "→", with the "esc" chip on the right; long originals are cut to one line. Numbered rows with
+/// the first one subtly highlighted; options wrap, the panel is 200 to 460 pt wide. For a
+/// multi-word selection, what an option adds to the original is lit (`SuggestCore.segments`).
+/// A small muted footer. The surface is VoiceInk's own (`AutoLearnSuggestionSurface`), so light
+/// and dark follow the app. A picked line takes VoiceInk's selected-row look (`AppTheme.Selection`,
+/// the green check of `ModePopover`), and the panel fades as before.
 struct SuggestPanelView: View {
     @ObservedObject var model: SuggestPanelModel
 
-    /// The AppKit twins of the title and option fonts below, for their cap heights.
-    private static let titleMetrics = NSFont.systemFont(ofSize: 15, weight: .semibold)
-    private static let optionMetrics = NSFont.systemFont(ofSize: 15, weight: .medium)
-    private static let badgeWidth: CGFloat = 22
-    private static let badgeGap: CGFloat = 10
+    /// The AppKit twin of the option font, for its cap height.
+    private static let optionMetrics = NSFont.systemFont(ofSize: 14)
+    private static let badgeGap: CGFloat = 9
     private static let checkWidth: CGFloat = 14
-    /// How far a line's highlight reaches past the columns, sideways and up and down.
-    private static let rowInset = CGSize(width: 8, height: 4)
+    private static let minWidth: CGFloat = 200
+    private static let maxWidth: CGFloat = 460
+    /// The content edge: the top line, the badges and the footer start this far in.
+    private static let edge: CGFloat = 10
+    /// A row's highlight reaches this close to the panel's sides.
+    private static let rowMargin: CGFloat = 4
+    private static let changeFill = Color.accentColor.opacity(0.22)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .suggestFirstLine) {
-                Text(verbatim: "Suggestions")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .firstLineMiddle(Self.titleMetrics)
-                Spacer(minLength: 12)
-                SuggestKeyChip(text: "esc")
-            }
-            if let original = model.original {
-                Text(verbatim: original)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        SuggestWidthLayout(minWidth: Self.minWidth, maxWidth: Self.maxWidth) {
+            content
+        }
+        .modifier(AutoLearnSuggestionSurface())
+        .fixedSize()
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            topLine
+                .padding(.horizontal, Self.edge)
+                .padding(.top, 2)
+                .padding(.bottom, 4)
             if let items = model.items {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                        row(line: index + 1, text: item)
-                    }
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    row(line: index + 1, text: item)
                 }
-                .padding(.horizontal, -Self.rowInset.width)
-                .padding(.vertical, -Self.rowInset.height)
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(verbatim: "Paste")
-                    SuggestKeyChip(text: items.count == 1 ? "1" : "1–\(items.count)")
-                    Text(verbatim: "·")
-                    Text(verbatim: "Suggest again for other options")
-                }
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(AppTheme.Text.secondary)
+                footer(count: items.count)
             } else {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -432,25 +569,49 @@ struct SuggestPanelView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 }
+                .padding(.horizontal, Self.edge)
+                .padding(.vertical, 4)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(verbatim: "Thinking"))
                 .accessibilityIdentifier("suggest-thinking")
             }
         }
-        .padding(16)
-        .frame(width: 400, alignment: .leading)
-        .modifier(AutoLearnSuggestionSurface())
-        .fixedSize(horizontal: false, vertical: true)
+        .padding(.top, 6)
+        .padding(.bottom, 7)
+    }
+
+    private var topLine: some View {
+        HStack(alignment: .center, spacing: 12) {
+            if let original = model.original {
+                HStack(spacing: 5) {
+                    Text(verbatim: original.replacingOccurrences(of: "\n", with: " "))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.primary.opacity(0.85))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(verbatim: "→")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(verbatim: original))
+                .accessibilityIdentifier("suggest-original")
+            }
+            Spacer(minLength: 0)
+            SuggestKeyChip(text: "esc")
+        }
     }
 
     private func row(line: Int, text: String) -> some View {
         let isPicked = model.picked == line
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
         return HStack(alignment: .suggestFirstLine, spacing: Self.badgeGap) {
-            SuggestKeyChip(text: "\(line)", width: Self.badgeWidth)
-            Text(verbatim: text)
-                .font(.system(size: 15, weight: .medium))
+            SuggestKeyChip(text: "\(line)", badge: true)
+            optionText(text)
+                .font(.system(size: 14))
                 .foregroundStyle(.primary)
+                .lineSpacing(3)
                 .lineLimit(8)
                 .truncationMode(.tail)
                 .fixedSize(horizontal: false, vertical: true)
@@ -463,18 +624,66 @@ struct SuggestPanelView: View {
                 .frame(width: Self.checkWidth)
                 .opacity(isPicked ? 1 : 0)
         }
-        .padding(.horizontal, Self.rowInset.width)
-        .padding(.vertical, Self.rowInset.height)
+        .padding(.horizontal, Self.edge - Self.rowMargin)
+        .padding(.vertical, 4)
         .background {
             if isPicked {
                 shape.fill(AppTheme.Selection.fill)
                     .overlay(shape.strokeBorder(AppTheme.Selection.border, lineWidth: 1))
+            } else if line == 1 {
+                shape.fill(AppTheme.Surface.subtle)
             }
         }
+        .padding(.horizontal, Self.rowMargin)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: "\(line) \(text)"))
         .accessibilityAddTraits(isPicked ? .isSelected : [])
         .accessibilityIdentifier("suggest-item-\(line)")
+    }
+
+    /// The option, with what it adds to a multi-word original lit.
+    private func optionText(_ text: String) -> Text {
+        var attributed = AttributedString()
+        for segment in SuggestCore.segments(of: text, original: model.original ?? "") {
+            var run = AttributedString(segment.text)
+            if segment.changed { run.backgroundColor = Self.changeFill }
+            attributed += run
+        }
+        return Text(attributed)
+    }
+
+    private func footer(count: Int) -> some View {
+        Text(verbatim: "Fn + \(count == 1 ? "1" : "1–\(count)") paste · △ more")
+            .font(.system(size: 11))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, Self.edge)
+            .padding(.top, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.07))
+                    .frame(height: 1)
+            }
+            .padding(.top, 4)
+            .accessibilityIdentifier("suggest-footer")
+    }
+}
+
+/// Takes its content's one-line (ideal) width, kept within `minWidth…maxWidth`, then the height the
+/// content needs at that width. So a short list is as narrow as its longest line, and a long option
+/// wraps at `maxWidth` with the panel tall enough for every line.
+private struct SuggestWidthLayout: Layout {
+    let minWidth: CGFloat
+    let maxWidth: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let content = subviews.first else { return .zero }
+        let width = min(max(content.sizeThatFits(.unspecified).width, minWidth), maxWidth)
+        return CGSize(width: width, height: content.sizeThatFits(ProposedViewSize(width: width, height: nil)).height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(bounds.size))
     }
 }
 
@@ -495,21 +704,19 @@ private extension View {
     }
 }
 
-/// The key hint of the Quick Add panel's "↵" and "esc" chips. A line badge has a fixed width,
-/// so 1 to 9 are all the same size.
+/// The key chips of the mockup: "esc" on the top line, and an 18 pt square digit badge per row,
+/// so 1 to 9 are all the same size. Colours from the Quick Add panel's chips (`AppTheme`).
 private struct SuggestKeyChip: View {
     let text: String
-    var width: CGFloat?
+    var badge = false
 
     var body: some View {
         Text(verbatim: text)
-            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .font(.system(size: badge ? 11 : 10.5, weight: .semibold, design: .rounded))
             .monospacedDigit()
             .foregroundStyle(AppTheme.Text.secondary)
-            .padding(.horizontal, width == nil ? 6 : 0)
-            .padding(.vertical, 3)
-            .frame(minWidth: width == nil ? 22 : nil)
-            .frame(width: width)
-            .background(AppTheme.Surface.controlActive, in: RoundedRectangle(cornerRadius: 5))
+            .padding(.horizontal, badge ? 0 : 5)
+            .frame(width: badge ? 18 : nil, height: badge ? 18 : 16)
+            .background(AppTheme.Surface.controlActive, in: RoundedRectangle(cornerRadius: badge ? 5 : 4))
     }
 }
