@@ -105,7 +105,8 @@ struct AutoLearnSuggestionContent: View {
     }
 }
 
-private struct AutoLearnSuggestionSurface: ViewModifier {
+/// Fork F3: also the Suggest panel's surface (internal; was private).
+struct AutoLearnSuggestionSurface: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     private let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
 

@@ -60,6 +60,7 @@ final class SuggestController {
         session = SuggestCore.Session()
         asked = nil
         startKeys()
+        model.original = nil
         model.items = nil
         showPanel()
         Self.logger.notice("Suggest open")
@@ -121,6 +122,7 @@ final class SuggestController {
         let selection = await SelectedTextService.fetchSelectedText(isEnabled: true)
         guard isCurrent else { return }
         session?.selectionCaptured(selection)
+        model.original = selection
         guard let selection else {
             fail("Suggest: select some text first. Nothing was changed.", reason: "no-selection")
             return
@@ -227,6 +229,7 @@ final class SuggestController {
         keyMonitor.stop(reason: "suggest-closed")
         panel.orderOut(nil)
         model.items = nil
+        model.original = nil
         session = nil
         asked = nil
     }
@@ -279,6 +282,8 @@ enum SuggestContextReader {
 
 @MainActor
 final class SuggestPanelModel: ObservableObject {
+    /// The selected text, once captured.
+    @Published var original: String?
     /// nil while thinking.
     @Published var items: [String]?
 }
@@ -309,6 +314,7 @@ final class SuggestPanel: NSPanel {
         isOpaque = false
         hasShadow = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        appearance = nil  // follows VoiceInk's appearance, as the AutoLearn panel does
         contentView = hostingView
         setAccessibilityIdentifier("voiceink-suggest-panel")
     }
@@ -329,56 +335,88 @@ final class SuggestPanel: NSPanel {
     }
 }
 
+/// Styled after VoiceInk's own non-activating suggestion panel, AutoLearn's "Learn this
+/// correction?" (`AutoLearnSuggestionContent.swift`: 400 pt wide, 16 pt padding, 15 pt
+/// semibold title, 13 pt secondary original, `AutoLearnSuggestionSurface`), with the key
+/// chips of the Quick Add panel (`DictionaryQuickAddPanel.swift`, `QuickPanelControls.swift`).
 struct SuggestPanelView: View {
     @ObservedObject var model: SuggestPanelModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(verbatim: "Suggest")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(verbatim: "Suggestions")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 12)
+                SuggestKeyChip(text: "esc")
+            }
+            if let original = model.original {
+                Text(verbatim: original)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let items = model.items {
-                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(verbatim: "\(index + 1)")
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                        if item.count > 60 || item.contains("\n") {
-                            // A phrase or a few lines: wrap at a fixed width.
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            SuggestKeyChip(text: "\(index + 1)")
                             Text(verbatim: item)
-                                .font(.body)
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(.primary)
                                 .lineLimit(8)
                                 .truncationMode(.tail)
                                 .fixedSize(horizontal: false, vertical: true)
-                                .frame(width: 560, alignment: .leading)
-                        } else {
-                            Text(verbatim: item)
-                                .font(.body)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(Text(verbatim: "\(index + 1) \(item)"))
+                        .accessibilityIdentifier("suggest-item-\(index + 1)")
                     }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(Text(verbatim: "\(index + 1) \(item)"))
-                    .accessibilityIdentifier("suggest-item-\(index + 1)")
                 }
-                Text(verbatim: "Fn + digit picks · Suggest again for others · Esc closes")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    SuggestKeyChip(text: items.count == 1 ? "1" : "1–\(items.count)")
+                    Text(verbatim: "paste")
+                    Text(verbatim: "·")
+                    Text(verbatim: "Suggest again for other options")
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(AppTheme.Text.secondary)
             } else {
                 HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
+                    ProgressView()
+                        .controlSize(.small)
                     Text(verbatim: "Thinking…")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(verbatim: "Thinking"))
                 .accessibilityIdentifier("suggest-thinking")
-                Text(verbatim: "Esc closes")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
         }
-        .padding(14)
-        .frame(minWidth: 240, alignment: .leading)
-        .fixedSize()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .padding(16)
+        .frame(width: 400, alignment: .leading)
+        .modifier(AutoLearnSuggestionSurface())
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// The key hint of the Quick Add panel's "↵" and "esc" chips.
+private struct SuggestKeyChip: View {
+    let text: String
+
+    var body: some View {
+        Text(verbatim: text)
+            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(AppTheme.Text.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .frame(minWidth: 22)
+            .background(AppTheme.Surface.controlActive, in: RoundedRectangle(cornerRadius: 5))
     }
 }
