@@ -146,10 +146,15 @@ class TranscriptionPipeline {
             let formattingConfiguration = resolveFormattingConfiguration()
             let resolvedEnhancementConfiguration = enhancementConfiguration()
             let resolvedOutputConfiguration = outputConfiguration()
-            let modeMetadata = metadata(
-                for: formattingConfiguration.mode ?? resolvedEnhancementConfiguration?.mode
-                    ?? resolvedOutputConfiguration.mode ?? transcriptionConfiguration.mode
-            )
+            let effectiveMode =
+                formattingConfiguration.mode ?? resolvedEnhancementConfiguration?.mode
+                ?? resolvedOutputConfiguration.mode ?? transcriptionConfiguration.mode
+            let modeMetadata = metadata(for: effectiveMode)
+            let isRewrite =
+                !assistant.isFollowUp
+                && effectiveMode.selectedPrompt.flatMap(UUID.init(uuidString:)) == PromptTemplates.rewritePromptId
+            var enhancedText: String?
+            var capturedSelection: String?
 
             if formattingConfiguration.isTextFormattingEnabled {
                 text = ParagraphFormatter.format(text)
@@ -207,6 +212,7 @@ class TranscriptionPipeline {
                         let selectedText = await SelectedTextService.fetchSelectedText(
                             isEnabled: resolvedEnhancementConfiguration.useSelectedTextContext
                         )
+                        capturedSelection = selectedText
                         if Task.isCancelled || shouldCancel() {
                             await finishCanceledTranscription()
                             return
@@ -239,6 +245,7 @@ class TranscriptionPipeline {
                         transcription.aiRequestSystemMessage = enhancementResult.systemMessage
                         transcription.aiRequestUserMessage = enhancementResult.userMessage
                         finalText = enhancementResult.text
+                        enhancedText = enhancementResult.text
                     } catch {
                         let errorDescription = EnhancementFailureFormatter.description(for: error)
                         let failureMessage = EnhancementFailureFormatter.message(description: errorDescription)
@@ -255,6 +262,21 @@ class TranscriptionPipeline {
                             return
                         }
                     }
+                }
+            }
+
+            let rewriteDecision = RewriteDeliveryGate.decide(
+                stockText: finalText,
+                isRewrite: isRewrite,
+                enhancedText: enhancedText,
+                selectedText: capturedSelection
+            )
+            finalText = rewriteDecision.text
+            if let withheld = rewriteDecision.withheld {
+                logger.notice("Rewrite withheld reason=\(withheld.rawValue, privacy: .public)")
+                // A failed enhancement already showed its own warning above.
+                if responseError == nil {
+                    NotificationManager.shared.showNotification(title: withheld.notice, type: .warning)
                 }
             }
 
