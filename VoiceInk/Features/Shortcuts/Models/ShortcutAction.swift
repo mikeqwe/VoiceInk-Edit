@@ -9,10 +9,14 @@ enum ShortcutAction: Hashable, Sendable {
     case cancelRecorder
     case openQuickHistory
     case quickAddToDictionary
+    /// Fork F2: replacements for the selected word, picked from a numbered list.
+    case suggestReplacement
     case mode(UUID)
     case recorderPanelEscape
     case recorderPanelReturn
     case recorderPanelMode(Int)
+    /// A key the Suggest list owns while it shows (`SuggestCore.keyBindings[index]`).
+    case suggestPanelKey(Int)
 
     var userDefaultsKey: String {
         "Shortcut_\(storageName)"
@@ -20,7 +24,7 @@ enum ShortcutAction: Hashable, Sendable {
 
     var isStored: Bool {
         switch self {
-        case .recorderPanelEscape, .recorderPanelReturn, .recorderPanelMode:
+        case .recorderPanelEscape, .recorderPanelReturn, .recorderPanelMode, .suggestPanelKey:
             return false
         default:
             return true
@@ -45,6 +49,8 @@ enum ShortcutAction: Hashable, Sendable {
             return "openHistoryWindow"
         case .quickAddToDictionary:
             return "quickAddToDictionary"
+        case .suggestReplacement:
+            return "suggestReplacement"
         case .mode(let id):
             return "mode_\(id.uuidString)"
         case .recorderPanelEscape:
@@ -53,6 +59,8 @@ enum ShortcutAction: Hashable, Sendable {
             return "recorderPanelReturn"
         case .recorderPanelMode(let index):
             return "recorderPanelMode_\(index)"
+        case .suggestPanelKey(let index):
+            return "suggestPanelKey_\(index)"
         }
     }
 
@@ -74,6 +82,8 @@ enum ShortcutAction: Hashable, Sendable {
             return String(localized: "Open Quick History")
         case .quickAddToDictionary:
             return String(localized: "Quick Add to Dictionary")
+        case .suggestReplacement:
+            return "Suggest Replacement"
         case .mode(let id):
             if let config = ModeManager.shared.getConfiguration(with: id) {
                 return String(format: String(localized: "%@ Mode"), config.name)
@@ -90,6 +100,8 @@ enum ShortcutAction: Hashable, Sendable {
             return String(localized: "Auto Send")
         case .recorderPanelMode(let index):
             return String(format: String(localized: "Select Mode %@"), Self.displayNumber(forRecorderPanelIndex: index))
+        case .suggestPanelKey:
+            return "Suggest Pick"
         }
     }
 
@@ -99,6 +111,7 @@ enum ShortcutAction: Hashable, Sendable {
         .retryLastTranscription,
         .openQuickHistory,
         .quickAddToDictionary,
+        .suggestReplacement,
     ]
 
     static let recorderPanelStoredActions: [Self] = [

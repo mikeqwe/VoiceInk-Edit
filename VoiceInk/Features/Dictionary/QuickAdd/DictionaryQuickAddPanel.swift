@@ -19,7 +19,14 @@ final class DictionaryQuickAddManager {
         isVisible ? hide() : show(modelContainer: modelContainer)
     }
 
-    func show(modelContainer: ModelContainer) {
+    /// Fork: reads the selection first and puts a short one in the vocabulary field.
+    func toggleWithSelection(modelContainer: ModelContainer) async {
+        guard !isVisible else { return hide() }
+        let selection = await SelectedTextService.fetchSelectedText(isEnabled: true)
+        show(modelContainer: modelContainer, initialWord: QuickAddPrefill.word(from: selection))
+    }
+
+    func show(modelContainer: ModelContainer, initialWord: String = "") {
         guard !isVisible else { return }
 
         previousApp = NSWorkspace.shared.frontmostApplication
@@ -41,7 +48,8 @@ final class DictionaryQuickAddManager {
             onDismiss: { [weak self] in self?.hide() },
             onResize: { [weak self] height in
                 self?.panel?.resizeKeepingTopEdge(to: NSSize(width: 500, height: height))
-            }
+            },
+            initialWord: initialWord
         )
         .modelContainer(modelContainer)
 
@@ -109,6 +117,7 @@ struct DictionaryQuickAddView: View {
 
     let onDismiss: () -> Void
     let onResize: (CGFloat) -> Void
+    var initialWord = ""
 
     var body: some View {
         QuickPanelScaffold {
@@ -141,6 +150,7 @@ struct DictionaryQuickAddView: View {
             return .handled
         }
         .onAppear {
+            if wordInput.isEmpty { wordInput = initialWord }
             DispatchQueue.main.async { focusedField = .word }
         }
         .onChange(of: mode) { _, newMode in

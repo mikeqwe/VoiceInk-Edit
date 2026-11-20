@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Foundation
 import os
 
@@ -96,6 +97,16 @@ class RecordingShortcutManager: ObservableObject {
 
     init(engine: VoiceInkEngine, recorderUIManager: RecorderUIManager) {
         ShortcutMigration.migrateLegacyShortcutsIfNeeded()
+        // Fork: the K0 pad's chords, seeded once; a cleared or changed shortcut is kept.
+        // ⌃⌥F16 is Fn + △ (Suggest, F2); ⌃⌥F19 is 0 + + (Quick Add to Dictionary).
+        ShortcutStore.seedShortcut(
+            .key(keyCode: UInt16(kVK_F16), modifierFlags: [.control, .option]),
+            for: .suggestReplacement
+        )
+        ShortcutStore.seedShortcut(
+            .key(keyCode: UInt16(kVK_F19), modifierFlags: [.control, .option]),
+            for: .quickAddToDictionary
+        )
 
         self.primaryRecordingShortcut = ShortcutMigration.migrateShortcutSelection(
             action: .primaryRecording,
@@ -289,7 +300,12 @@ class RecordingShortcutManager: ObservableObject {
         case .openQuickHistory:
             QuickHistoryController.shared.show(modelContext: engine.modelContext, engine: engine)
         case .quickAddToDictionary:
-            DictionaryQuickAddManager.shared.toggle(modelContainer: engine.modelContext.container)
+            await DictionaryQuickAddManager.shared.toggleWithSelection(modelContainer: engine.modelContext.container)
+        case .suggestReplacement:
+            SuggestController.shared.run(
+                modelContext: engine.modelContext,
+                isRecorderVisible: recorderUIManager.isRecorderPanelVisible
+            )
         default:
             break
         }
