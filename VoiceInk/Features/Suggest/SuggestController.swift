@@ -201,6 +201,8 @@ final class SuggestController {
             guard isCurrent else { return }
             let items = SuggestCore.replacements(
                 fromModelOutput: completion.text, original: request.selection, excluding: rejected)
+            let answered = SuggestCore.answerItemCount(completion.text).map(String.init) ?? "not-json"
+            Self.logger.notice("Suggest answer items=\(answered, privacy: .public) kept=\(items.count, privacy: .public) chars=\(completion.text.count, privacy: .public)")
             guard !items.isEmpty else {
                 fail("Suggest: no \(rejected.isEmpty ? "" : "new ")replacements came back. Nothing was changed.", reason: "empty-answer")
                 return
@@ -352,7 +354,8 @@ enum SuggestContextReader {
 
 /// Reads where the selected text is on screen, so the list can open there (F4). Read-only
 /// Accessibility queries, each under a short messaging timeout. It never turns on an app's web
-/// accessibility, so an Electron editor that has not exposed its text gives no rectangle.
+/// accessibility, so an Electron editor that has not exposed its text gives no rectangle; the apps
+/// in `WebAccessibilityKeepOn` have it on (F5).
 /// Order: the bounds of the selected range; then the caret (a zero-length range at the
 /// selection's end, or its last character); then the bounds of the selected text-marker range
 /// (WebKit and Chromium web text). Rectangles are in Accessibility coordinates (top-left origin).

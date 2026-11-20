@@ -109,8 +109,11 @@ final class AccessibilityTextReader {
     func restoreWebAccessibility(processID: pid_t, appElement: AXUIElement) {
         guard webAccessibilityProcesses.remove(processID) != nil else { return }
         AccessibilityWebAccess.shared.release(processID: processID) { previous in
+            // Fork F5: an app that keeps web accessibility on (`WebAccessibilityKeepOn`) is not
+            // switched back off.
+            guard let value = WebAccessibilityKeepOn.valueAfterRead(previous: previous, processID: processID) else { return }
             _ = AXUIElementSetAttributeValue(appElement, Self.manualAccessibilityAttribute,
-                previous ? kCFBooleanTrue : kCFBooleanFalse)
+                value ? kCFBooleanTrue : kCFBooleanFalse)
         }
     }
 

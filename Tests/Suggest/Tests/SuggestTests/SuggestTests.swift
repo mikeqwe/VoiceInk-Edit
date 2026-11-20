@@ -33,10 +33,62 @@ final class SuggestTests: XCTestCase {
     }
 
     func testDedupeAndDropTheOriginal() {
+        // F5: "claude" is a case-only variant of "Claude", so it no longer counts as another option.
         let output = "[\"Claude\", \" Claude \", \"Клод\", \"  Клод\", \"Claud\", \"Claude\", \"claude\"]"
-        XCTAssertEqual(SuggestCore.replacements(fromModelOutput: output, original: "Клод"), ["Claude", "Claud", "claude"])
+        XCTAssertEqual(SuggestCore.replacements(fromModelOutput: output, original: "Клод"), ["Claude", "Claud"])
         // A case-only fix is a real replacement.
         XCTAssertEqual(SuggestCore.replacements(fromModelOutput: "[\"github\", \"GitHub\"]", original: "github"), ["GitHub"])
+    }
+
+    /// F5: an option that differs from another, or from an option already shown, only in letter
+    /// case, punctuation or spacing is the same option. One fix of the selection's own case or
+    /// punctuation stays. Splitting or joining words is a real difference.
+    func testOptionsThatDifferOnlyInCaseOrPunctuationCountOnce() {
+        // The F4 "tommorow" list: four spellings of one word.
+        let tomorrow = "[\"tomorrow\", \"Tomorrow\", \"tomorrow,\", \"tomorrow.\", \"to-morrow\", \"tomorrow's\", \"to morrow\"]"
+        XCTAssertEqual(
+            SuggestCore.replacements(fromModelOutput: tomorrow, original: "tommorow"),
+            ["tomorrow", "tomorrow's", "to morrow"])
+        // The selection's own case or punctuation is the error: its first fix stays, a second is a repeat.
+        XCTAssertEqual(
+            SuggestCore.replacements(fromModelOutput: "[\"GitHub\", \"Github\", \"GitLab\"]", original: "github"),
+            ["GitHub", "GitLab"])
+        XCTAssertEqual(
+            SuggestCore.replacements(fromModelOutput: "[\"it's done\", \"It’s done.\", \"it is done\"]", original: "its done"),
+            ["it's done", "it is done"])
+        // Spacing runs, and an option already shown in this run.
+        XCTAssertEqual(
+            SuggestCore.replacements(
+                fromModelOutput: "[\"we were  going\", \"We were going!\", \"we are going\"]",
+                original: "we was going", excluding: ["we were going"]),
+            ["we are going"])
+        // Letters in any script are compared case-insensitively.
+        XCTAssertEqual(
+            SuggestCore.replacements(fromModelOutput: "[\"Зонт\", \"зонт\", \"зонт,\", \"зонтик\"]", original: "сон"),
+            ["Зонт", "зонтик"])
+        XCTAssertEqual(SuggestCore.variantKey("  To-morrow,  please! "), "tomorrow please")
+        XCTAssertEqual(SuggestCore.variantKey("…"), "…", "a punctuation-only text is its own key")
+    }
+
+    /// F5: web accessibility stays on only in T3 Code and Slack, and only while the defaults key
+    /// allows it. Every other app gets back the value it had, as upstream does.
+    func testOnlyListedAppsKeepWebAccessibilityOn() {
+        for listed in ["com.t3tools.t3code", "com.tinyspeck.slackmacgap"] {
+            XCTAssertTrue(WebAccessibilityKeepOn.keepsOn(bundleIdentifier: listed, enabled: true), listed)
+            XCTAssertNil(WebAccessibilityKeepOn.valueAfterRead(previous: false, bundleIdentifier: listed, enabled: true), listed)
+            // The off switch: back to today's restore.
+            XCTAssertFalse(WebAccessibilityKeepOn.keepsOn(bundleIdentifier: listed, enabled: false), listed)
+            XCTAssertEqual(WebAccessibilityKeepOn.valueAfterRead(previous: false, bundleIdentifier: listed, enabled: false), false, listed)
+        }
+        // Other Electron and Chromium apps are not on the list.
+        for other in ["com.microsoft.VSCode", "com.hnc.Discord", "com.google.Chrome", "com.t3tools.t3code.helper", "", nil] as [String?] {
+            XCTAssertFalse(WebAccessibilityKeepOn.keepsOn(bundleIdentifier: other, enabled: true), other ?? "nil")
+            XCTAssertEqual(WebAccessibilityKeepOn.valueAfterRead(previous: false, bundleIdentifier: other, enabled: true), false, other ?? "nil")
+        }
+        // On before the read: it is put back on, listed or not.
+        XCTAssertEqual(WebAccessibilityKeepOn.valueAfterRead(previous: true, bundleIdentifier: "com.microsoft.VSCode", enabled: true), true)
+        XCTAssertEqual(WebAccessibilityKeepOn.valueAfterRead(previous: true, bundleIdentifier: "com.t3tools.t3code", enabled: true), true)
+        XCTAssertEqual(WebAccessibilityKeepOn.bundleIdentifiers, ["com.t3tools.t3code", "com.tinyspeck.slackmacgap"])
     }
 
     func testAtMostFiveReplacements() {
@@ -265,7 +317,12 @@ final class SuggestTests: XCTestCase {
             XCTAssertFalse(prompt.localizedCaseInsensitiveContains(reason), "gives a reason: \(reason)")
         }
         XCTAssertTrue(prompt.contains("Never return the SELECTION unchanged."))
-        XCTAssertTrue(prompt.contains("differs from the SELECTION only in letter case is allowed"))
+        // F5: a case-only replacement is allowed only when the selection's own error is its case or
+        // punctuation (was: always allowed, which gave "tomorrow", "Tomorrow", "tomorrow.").
+        XCTAssertTrue(prompt.contains("when the SELECTION's own error is its letter case or punctuation"), prompt)
+        XCTAssertFalse(prompt.contains("differs from the SELECTION only in letter case is allowed"))
+        XCTAssertTrue(prompt.contains("Return exactly 5 replacements"))
+        XCTAssertTrue(prompt.contains("with exactly 5 distinct items"))
         XCTAssertTrue(prompt.contains("OTHER_TEXT, when present, is other text visible in the same window; may be unrelated."))
         XCTAssertTrue(prompt.contains("REJECTED, when present, lists replacements already offered"))
         XCTAssertTrue(prompt.contains("a word, a phrase or a few lines"))
@@ -280,11 +337,12 @@ final class SuggestTests: XCTestCase {
         session.show(["Cloud"])
         XCTAssertEqual(session.shown, ["Claude", "Claude Code", "Cloud"])
         XCTAssertTrue(session.askForNewSet())
-        // The model repeats shown options anyway: the code drops them.
+        // The model repeats shown options anyway: the code drops them, and (F5) their case-only
+        // variants too.
         let output = "[\"Claude\", \"claude\", \"Cloud\", \"Clod\", \"Claude Code\"]"
         XCTAssertEqual(
             SuggestCore.replacements(fromModelOutput: output, original: "Клод", excluding: session.shown),
-            ["claude", "Clod"])
+            ["Clod"])
         XCTAssertEqual(
             SuggestCore.userMessage(selection: "Клод", context: .none, rejected: ["Claude", "Cloud"]),
             "<SELECTION>Клод</SELECTION>\n<REJECTED><OPTION>Claude</OPTION><OPTION>Cloud</OPTION></REJECTED>")
