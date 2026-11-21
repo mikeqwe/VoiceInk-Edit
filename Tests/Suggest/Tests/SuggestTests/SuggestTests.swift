@@ -370,6 +370,39 @@ final class SuggestTests: XCTestCase {
         XCTAssertEqual(loading.handle(.pick(1)), .none)
     }
 
+    // MARK: A press while a run is open (F6)
+
+    func testAPressWhileTheListShowsWorksOnTheSelectionAtThatPress() {
+        let ready = readySession(["Claude", "Cloud"]).phase
+        // The same selection: a new set, as before F6. The capture trims, so edges do not count.
+        XCTAssertEqual(SuggestCore.pressDecision(phase: ready, runSelection: "Клод", current: "Клод"), .newSet)
+        XCTAssertEqual(SuggestCore.pressDecision(phase: ready, runSelection: "Клод", current: " Клод\n"), .newSet)
+        // Another word was selected while the list showed (the owner's 11:33:18 press): a fresh run.
+        XCTAssertEqual(SuggestCore.pressDecision(phase: ready, runSelection: "Клод", current: "патч"), .freshRun)
+        XCTAssertEqual(SuggestCore.pressDecision(phase: ready, runSelection: "Клод", current: "клод"), .freshRun,
+                       "letter case is part of the selection")
+        // Nothing selected now: a fresh run, which says so, rather than options for an old word.
+        XCTAssertEqual(SuggestCore.pressDecision(phase: ready, runSelection: "Клод", current: nil), .freshRun)
+        // While the first request still thinks: the same selection waits, another one restarts.
+        let thinking = SuggestCore.Session().phase
+        XCTAssertEqual(SuggestCore.pressDecision(phase: thinking, runSelection: "Клод", current: "Клод"),
+                       .ignore(reason: "already-thinking"))
+        XCTAssertEqual(SuggestCore.pressDecision(phase: thinking, runSelection: "Клод", current: "патч"), .freshRun)
+        XCTAssertEqual(SuggestCore.pressDecision(phase: thinking, runSelection: nil, current: nil),
+                       .ignore(reason: "already-thinking"))
+        XCTAssertEqual(SuggestCore.pressDecision(phase: thinking, runSelection: nil, current: "патч"), .freshRun)
+        // A new set loading for the same selection: a second press changes nothing.
+        var loading = readySession(["Claude"])
+        XCTAssertTrue(loading.askForNewSet())
+        XCTAssertEqual(SuggestCore.pressDecision(phase: loading.phase, runSelection: "Клод", current: "Клод"),
+                       .ignore(reason: "already-thinking"))
+        // A pick being pasted replaces the selection: nothing, whatever is selected.
+        var picked = readySession(["Claude"])
+        _ = picked.handle(.pick(1))
+        XCTAssertEqual(SuggestCore.pressDecision(phase: picked.phase, runSelection: "Клод", current: "патч"),
+                       .ignore(reason: "closing"))
+    }
+
     // MARK: Phrases and lines (F3)
 
     func testSelectionCap() {
@@ -470,6 +503,70 @@ final class SuggestTests: XCTestCase {
         // Top-left origin: a line 100 pt from the top of a 900 pt primary screen.
         let ax = CGRect(x: 400, y: 100, width: 40, height: 18)
         XCTAssertEqual(SuggestCore.appKitRect(fromAccessibility: ax, primaryScreenMaxY: 900), CGRect(x: 400, y: 782, width: 40, height: 18))
+    }
+
+    // MARK: No jump when the options arrive (F6)
+
+    func testARunOpensOnTheSideItsFullListNeedsAndKeepsIt() {
+        // A composer line 150 pt above the screen's bottom (the owner's Slack at 13:34:48).
+        let composer = CGRect(x: 400, y: 150, width: 60, height: 18)
+        let thinking = CGSize(width: 200, height: 60)
+        let options = CGSize(width: 200, height: SuggestCore.plannedListHeight)
+        XCTAssertEqual(SuggestCore.panelOrigin(size: thinking, anchor: composer, visible: visible).side, .below,
+                       "before F6: Thinking… fits below…")
+        XCTAssertEqual(SuggestCore.panelOrigin(size: options, anchor: composer, visible: visible).side, .above,
+                       "…and the list then jumped above")
+        // F6: the run takes the side a full list needs, and both sizes stay there, on one bottom edge.
+        let side = SuggestCore.runSide(size: thinking, anchor: composer, visible: visible)
+        XCTAssertEqual(side, .above)
+        let first = SuggestCore.panelOrigin(size: thinking, anchor: composer, visible: visible, keeping: side)
+        let second = SuggestCore.panelOrigin(size: options, anchor: composer, visible: visible, keeping: side)
+        XCTAssertEqual(first.side, .above)
+        XCTAssertEqual(second.side, .above)
+        XCTAssertEqual(first.origin.y, 172, "bottom 4 pt over the selection")
+        XCTAssertEqual(second.origin.y, first.origin.y, "the list grows up from the same edge")
+        // With room for a full list below, it opens and stays below.
+        let middle = CGRect(x: 400, y: 600, width: 60, height: 18)
+        let belowSide = SuggestCore.runSide(size: thinking, anchor: middle, visible: visible)
+        XCTAssertEqual(belowSide, .below)
+        XCTAssertEqual(SuggestCore.panelOrigin(size: options, anchor: middle, visible: visible, keeping: belowSide).side, .below)
+        // Only a list too tall for the kept side moves: there is no room above a line at the top.
+        let top = CGRect(x: 400, y: 700, width: 60, height: 18)
+        XCTAssertEqual(SuggestCore.panelOrigin(size: options, anchor: top, visible: visible, keeping: .above).side, .below)
+        // No anchor: the fallback, whatever was kept.
+        XCTAssertEqual(SuggestCore.panelOrigin(size: options, anchor: nil, visible: visible, keeping: .above).side, .fallback)
+    }
+
+    // MARK: A backward selection's rectangle (F6)
+
+    /// Chromium's answers for «Клод» in a contenteditable (`evidence/f6/params`): the range a
+    /// backward selection reports gives 160,192 0×0; the same markers in document order give 249,229 44×23.
+    private struct FakeMarkers: SuggestCore.MarkerQueries {
+        enum Range: Equatable { case backward, forward, ordered }
+        var orderedAvailable = true
+        func bounds(_ range: Range) -> CGRect? {
+            switch range {
+            case .backward: return CGRect(x: 160, y: 192, width: 0, height: 0)
+            case .forward, .ordered: return CGRect(x: 249, y: 229, width: 44, height: 23)
+            }
+        }
+        func inDocumentOrder(_ range: Range) -> Range? { orderedAvailable ? .ordered : nil }
+    }
+
+    func testABackwardSelectionGetsItsOwnRectangle() {
+        let word = CGRect(x: 249, y: 229, width: 44, height: 23)
+        let backward = SuggestCore.markerSelectionRect(FakeMarkers.Range.backward, FakeMarkers())
+        XCTAssertEqual(backward?.rect, word, "⌥⇧← selected: the markers in document order give the word")
+        XCTAssertEqual(backward?.reordered, true)
+        let forward = SuggestCore.markerSelectionRect(FakeMarkers.Range.forward, FakeMarkers())
+        XCTAssertEqual(forward?.rect, word)
+        XCTAssertEqual(forward?.reordered, false, "a forward selection is taken as reported")
+        XCTAssertNil(SuggestCore.markerSelectionRect(FakeMarkers.Range.backward, FakeMarkers(orderedAvailable: false)),
+                     "no ordered range: no rectangle, never the 0 × 0 one")
+        XCTAssertNil(SuggestCore.usableTextRect(CGRect(x: 160, y: 192, width: 0, height: 0)))
+        XCTAssertNil(SuggestCore.usableTextRect(CGRect(x: 160, y: 192, width: 40, height: CGFloat.infinity)))
+        XCTAssertEqual(SuggestCore.usableTextRect(CGRect(x: 293, y: 229, width: 0, height: 23)),
+                       CGRect(x: 293, y: 229, width: 0, height: 23), "a caret has no width but is usable")
     }
 
     // MARK: What an option changes (F4, 3b)

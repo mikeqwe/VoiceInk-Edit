@@ -224,6 +224,39 @@ enum SuggestCore {
         }
     }
 
+    // MARK: - Another press while a run is open (F6)
+
+    /// What a Suggest press does while a run is open. It is decided by the selection read at the
+    /// moment of that press, never by the run's own: the user may have selected another word
+    /// while the list showed.
+    enum PressDecision: Equatable, Sendable {
+        /// The same selection, with the list showing: a new set that excludes every option shown.
+        case newSet
+        /// Another selection, or none where the run had one: this run closes and a fresh run
+        /// starts for what is selected now.
+        case freshRun
+        /// The same selection while the run still thinks, or a pick being pasted: nothing.
+        case ignore(reason: String)
+    }
+
+    /// `runSelection` is the selection the run captured (nil before it has one); `current` is the
+    /// one read for this press (nil: nothing selected, or nothing readable). Both are trimmed as
+    /// the capture trims them.
+    static func pressDecision(phase: Session.Phase, runSelection: String?, current: String?) -> PressDecision {
+        switch phase {
+        case .picked, .closed:
+            return .ignore(reason: "closing")
+        case .thinking, .ready:
+            guard sameSelection(runSelection, current) else { return .freshRun }
+            if case .ready = phase { return .newSet }
+            return .ignore(reason: "already-thinking")
+        }
+    }
+
+    static func sameSelection(_ lhs: String?, _ rhs: String?) -> Bool {
+        lhs?.trimmingCharacters(in: .whitespacesAndNewlines) == rhs?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: - Confirming a pick
 
     /// How the list confirms a pick. The paste never waits for it: it starts at the pick, and the
@@ -249,6 +282,18 @@ enum SuggestCore {
 
     /// Space between the selected text and the list.
     static let panelGap: CGFloat = 4
+
+    /// The height of a list of five one-line options as the F5 build drew it (200 × 189 pt,
+    /// `impl/voiceink/evidence/f5/final/result.txt`). A run picks its side for a list this tall
+    /// (`runSide`), so "Thinking…" does not open below only to jump above when the options arrive.
+    static let plannedListHeight: CGFloat = 189
+
+    /// The side a run takes when it first shows: where a list at least `plannedListHeight` tall
+    /// would go. Later placements keep it (`panelOrigin(…keeping:)`).
+    static func runSide(size: CGSize, anchor: CGRect?, visible: CGRect) -> PanelSide {
+        let planned = CGSize(width: size.width, height: max(size.height, plannedListHeight))
+        return panelOrigin(size: planned, anchor: anchor, visible: visible).side
+    }
 
     /// An Accessibility rectangle (global, top-left origin at the primary screen's top) in AppKit
     /// screen coordinates (bottom-left origin at the primary screen's bottom).
@@ -279,13 +324,19 @@ enum SuggestCore {
     /// selection's left edge; for a multi-line selection `anchor` spans the lines, so the list goes
     /// under the last one. With no room below it goes above; with room on neither side, on the side
     /// with more room. Always kept whole inside `visible`. With no anchor: `fallbackOrigin`.
-    static func panelOrigin(size: CGSize, anchor: CGRect?, visible: CGRect) -> (origin: CGPoint, side: PanelSide) {
+    /// `keeping` (F6): the side the run already took. It stays while the list fits there, so a
+    /// list that grows does not jump to the other side; only a list too tall for that side moves.
+    static func panelOrigin(size: CGSize, anchor: CGRect?, visible: CGRect, keeping kept: PanelSide? = nil) -> (origin: CGPoint, side: PanelSide) {
         guard let anchor else { return (fallbackOrigin(size: size, visible: visible), .fallback) }
         let x = clamp(anchor.minX, visible.minX, visible.maxX - size.width)
         let below = anchor.minY - panelGap - size.height
         let above = anchor.maxY + panelGap
         let side: PanelSide
-        if below >= visible.minY {
+        if kept == .below, below >= visible.minY {
+            side = .below
+        } else if kept == .above, above + size.height <= visible.maxY {
+            side = .above
+        } else if below >= visible.minY {
             side = .below
         } else if above + size.height <= visible.maxY {
             side = .above
@@ -294,6 +345,40 @@ enum SuggestCore {
         }
         let y = clamp(side == .below ? below : above, visible.minY, visible.maxY - size.height)
         return (CGPoint(x: x, y: y), side)
+    }
+
+    // MARK: - The selection's rectangle from text markers (F6)
+
+    /// What the anchor reader asks a web text element (Chromium, WebKit) about its selected
+    /// text-marker range. `Range` is the element's opaque range; the reader answers with
+    /// Accessibility calls, the tests with a fake.
+    protocol MarkerQueries {
+        associatedtype Range
+        /// `AXBoundsForTextMarkerRange`.
+        func bounds(_ range: Range) -> CGRect?
+        /// The range's own two end markers as a range in document order
+        /// (`AXTextMarkerRangeForUnorderedTextMarkers`), or nil when the element cannot say.
+        func inDocumentOrder(_ range: Range) -> Range?
+    }
+
+    /// A rectangle that could hold text: finite, with height. Electron gives a zero rectangle when
+    /// it has no bounds for a range.
+    static func usableTextRect(_ rect: CGRect?) -> CGRect? {
+        guard let rect, rect.height > 0, [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite)
+        else { return nil }
+        return rect
+    }
+
+    /// The selected text's rectangle from its marker range, and whether it took the range in
+    /// document order. Chromium reports a selection made backwards (its focus before its anchor,
+    /// as ⌥⇧← leaves it) as a range from the anchor back to the focus, and in a contenteditable
+    /// gives that range a 0 × 0 rectangle; the same two markers in document order give the
+    /// selected text's own rectangle (F6, `evidence/f6/params`).
+    static func markerSelectionRect<Q: MarkerQueries>(_ range: Q.Range, _ queries: Q) -> (rect: CGRect, reordered: Bool)? {
+        if let rect = usableTextRect(queries.bounds(range)) { return (rect, false) }
+        guard let ordered = queries.inDocumentOrder(range), let rect = usableTextRect(queries.bounds(ordered))
+        else { return nil }
+        return (rect, true)
     }
 
     /// Where the list opened before F4: centred on the screen, its top a quarter down.

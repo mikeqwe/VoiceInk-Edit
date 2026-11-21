@@ -22,6 +22,8 @@ final class SuggestController {
     private var asked: Request?
     /// Counts runs, so a selection rectangle read for an earlier run is never applied to this one.
     private var openGeneration = 0
+    /// The selection read for a press while a run is open (F6), until it decides that press.
+    private var pressCheck: Task<Void, Never>?
 
     private struct Request {
         let selection: String
@@ -39,21 +41,41 @@ final class SuggestController {
 
     /// The Suggest shortcut. Opens the list at once, in "thinking", and takes its keys
     /// before anything else happens, so a digit pressed early is consumed and ignored.
-    /// Pressed again while the list shows, it asks for a new set that excludes every option
-    /// shown in this run; the list keeps its keys meanwhile.
+    /// Pressed again while a run is open (F6), it first reads the selection at that moment
+    /// (`SuggestCore.pressDecision`): the same selection with the list showing asks for a new set
+    /// that excludes every option shown in this run, and the list keeps its keys meanwhile;
+    /// another selection closes this run and starts a fresh one for it.
     func run(modelContext: ModelContext, isRecorderVisible: Bool) {
-        if var session {
-            guard session.askForNewSet(), let asked else {
-                Self.logger.notice("Suggest ignored reason=\(session.phase == .thinking ? "already-thinking" : "closing", privacy: .public)")
+        if let session {
+            // A pick is being pasted: its text is on the clipboard, so no selection read (whose
+            // Copy fallback uses the clipboard) may run now.
+            if case .picked = session.phase {
+                Self.logger.notice("Suggest ignored reason=closing")
                 return
             }
-            self.session = session
-            model.items = nil
-            panel.fitToContent()
-            Self.logger.notice("Suggest new set rejected=\(session.shown.count, privacy: .public)")
-            request = Task { [weak self] in await self?.ask(asked, rejected: session.shown) }
+            guard pressCheck == nil else {
+                Self.logger.notice("Suggest ignored reason=reading-selection")
+                return
+            }
+            let generation = openGeneration
+            pressCheck = Task { [weak self] in
+                let current = await SelectedTextService.fetchSelectedText(isEnabled: true)
+                guard !Task.isCancelled else { return }
+                self?.decidePress(current: current, generation: generation, modelContext: modelContext, isRecorderVisible: isRecorderVisible)
+            }
             return
         }
+        start(modelContext: modelContext, isRecorderVisible: isRecorderVisible, selection: .readNow)
+    }
+
+    /// Where a run's selection comes from: read when the run starts, or already read at the press
+    /// that started it (a press while another run was open).
+    private enum SelectionSource {
+        case readNow
+        case read(String?)
+    }
+
+    private func start(modelContext: ModelContext, isRecorderVisible: Bool, selection: SelectionSource) {
         guard !isRecorderVisible else {
             Self.logger.notice("Suggest ignored reason=recording")
             notify("Suggest: finish the recording first. Nothing was changed.")
@@ -66,7 +88,34 @@ final class SuggestController {
         model.items = nil
         showPanel()
         Self.logger.notice("Suggest open")
-        request = Task { [weak self] in await self?.fetch(modelContext: modelContext) }
+        request = Task { [weak self] in await self?.fetch(modelContext: modelContext, selection: selection) }
+    }
+
+    /// The second half of a press while a run is open, once the selection at that press is read.
+    private func decidePress(current: String?, generation: Int, modelContext: ModelContext, isRecorderVisible: Bool) {
+        pressCheck = nil
+        guard generation == openGeneration, var session else {
+            Self.logger.notice("Suggest ignored reason=closed-meanwhile")
+            return
+        }
+        switch SuggestCore.pressDecision(phase: session.phase, runSelection: session.selection, current: current) {
+        case .ignore(let reason):
+            Self.logger.notice("Suggest ignored reason=\(reason, privacy: .public)")
+        case .newSet:
+            guard session.askForNewSet(), let asked else {
+                Self.logger.notice("Suggest ignored reason=no-request")
+                return
+            }
+            self.session = session
+            model.items = nil
+            panel.fitToContent()
+            Self.logger.notice("Suggest new set rejected=\(session.shown.count, privacy: .public)")
+            request = Task { [weak self] in await self?.ask(asked, rejected: session.shown) }
+        case .freshRun:
+            Self.logger.notice("Suggest fresh run reason=selection-changed selectionChars=\(current?.count ?? 0, privacy: .public) previousChars=\(session.selection?.count ?? 0, privacy: .public)")
+            finish()
+            start(modelContext: modelContext, isRecorderVisible: isRecorderVisible, selection: .read(current))
+        }
     }
 
     // MARK: - Keys
@@ -148,8 +197,12 @@ final class SuggestController {
 
     // MARK: - Selection and model
 
-    private func fetch(modelContext: ModelContext) async {
-        let selection = await SelectedTextService.fetchSelectedText(isEnabled: true)
+    private func fetch(modelContext: ModelContext, selection source: SelectionSource) async {
+        let selection: String?
+        switch source {
+        case .readNow: selection = await SelectedTextService.fetchSelectedText(isEnabled: true)
+        case .read(let text): selection = text
+        }
         guard isCurrent else { return }
         session?.selectionCaptured(selection)
         model.original = selection
@@ -295,6 +348,8 @@ final class SuggestController {
         openGeneration &+= 1
         request?.cancel()
         request = nil
+        pressCheck?.cancel()
+        pressCheck = nil
         keyMonitor.stop(reason: "suggest-closed")
         panel.orderOut(nil)
         panel.alphaValue = 1
@@ -401,7 +456,7 @@ enum SuggestAnchorReader {
                 return done(rect, "caret")
             }
         }
-        if let rect = markerBounds(in: element) { return done(rect, "marker-bounds") }
+        if let marker = markerBounds(in: element) { return done(marker.rect, marker.reordered ? "marker-bounds-ordered" : "marker-bounds") }
         return done(nil, "no-text-bounds")
     }
 
@@ -422,25 +477,43 @@ enum SuggestAnchorReader {
         return rect(element, kAXBoundsForRangeParameterizedAttribute as CFString, parameter)
     }
 
-    private static func markerBounds(in element: AXUIElement) -> CGRect? {
+    private static func markerBounds(in element: AXUIElement) -> (rect: CGRect, reordered: Bool)? {
         var markers: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, "AXSelectedTextMarkerRange" as CFString, &markers) == .success,
             let markers
         else { return nil }
-        return rect(element, "AXBoundsForTextMarkerRange" as CFString, markers)
+        return SuggestCore.markerSelectionRect(markers, ElementMarkerQueries(element: element))
     }
 
-    /// A rectangle a parameterized attribute returns, if it could hold text: finite, with height.
+    /// `SuggestCore.MarkerQueries` over Accessibility calls on one element.
+    private struct ElementMarkerQueries: SuggestCore.MarkerQueries {
+        let element: AXUIElement
+
+        func bounds(_ range: CFTypeRef) -> CGRect? {
+            SuggestAnchorReader.rect(element, "AXBoundsForTextMarkerRange" as CFString, range)
+        }
+
+        func inDocumentOrder(_ range: CFTypeRef) -> CFTypeRef? {
+            guard CFGetTypeID(range) == AXTextMarkerRangeGetTypeID() else { return nil }
+            let markers = unsafeBitCast(range, to: AXTextMarkerRange.self)
+            let ends = [AXTextMarkerRangeCopyStartMarker(markers), AXTextMarkerRangeCopyEndMarker(markers)] as CFArray
+            var value: CFTypeRef?
+            guard AXUIElementCopyParameterizedAttributeValue(
+                element, "AXTextMarkerRangeForUnorderedTextMarkers" as CFString, ends, &value) == .success
+            else { return nil }
+            return value
+        }
+    }
+
+    /// A rectangle a parameterized attribute returns, if it could hold text (`SuggestCore.usableTextRect`).
     private static func rect(_ element: AXUIElement, _ attribute: CFString, _ parameter: CFTypeRef) -> CGRect? {
         var value: CFTypeRef?
         guard AXUIElementCopyParameterizedAttributeValue(element, attribute, parameter, &value) == .success,
             let value, CFGetTypeID(value) == AXValueGetTypeID()
         else { return nil }
         var rect = CGRect.zero
-        guard AXValueGetValue(unsafeBitCast(value, to: AXValue.self), .cgRect, &rect), rect.height > 0,
-            [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite)
-        else { return nil }
-        return rect
+        guard AXValueGetValue(unsafeBitCast(value, to: AXValue.self), .cgRect, &rect) else { return nil }
+        return SuggestCore.usableTextRect(rect)
     }
 }
 
@@ -464,6 +537,8 @@ final class SuggestPanel: NSPanel {
     private let hostingView: NSHostingView<SuggestPanelView>
     /// The selected text's rectangle in Accessibility coordinates, when it was read in time.
     private var anchor: CGRect?
+    /// The side this run took at its first placement (F6), kept while the list fits there.
+    private var runSide: SuggestCore.PanelSide?
 
     init(model: SuggestPanelModel) {
         hostingView = NSHostingView(rootView: SuggestPanelView(model: model))
@@ -489,11 +564,14 @@ final class SuggestPanel: NSPanel {
 
     func setAnchor(_ accessibilityRect: CGRect?) {
         anchor = accessibilityRect
+        runSide = nil
     }
 
     /// Sizes the panel to its content and places it at the anchor (`SuggestCore.panelOrigin`):
     /// under the selection, or above it when there is no room, whole on the screen that holds it.
-    /// With no anchor, or one on no screen, it goes where it always did on the mouse's screen.
+    /// The first placement with an anchor picks the side for a full list (`SuggestCore.runSide`);
+    /// later ones keep it while the list fits there. With no anchor, or one on no screen, it goes
+    /// where it always did on the mouse's screen.
     @discardableResult
     func fitToContent() -> SuggestCore.PanelSide {
         hostingView.layoutSubtreeIfNeeded()
@@ -516,7 +594,11 @@ final class SuggestPanel: NSPanel {
             setContentSize(size)
             return .fallback
         }
-        let placed = SuggestCore.panelOrigin(size: size, anchor: placedAnchor, visible: visible)
+        if placedAnchor != nil, runSide == nil {
+            runSide = SuggestCore.runSide(size: size, anchor: placedAnchor, visible: visible)
+        }
+        let placed = SuggestCore.panelOrigin(size: size, anchor: placedAnchor, visible: visible, keeping: runSide)
+        if placedAnchor != nil { runSide = placed.side }
         setFrame(NSRect(origin: placed.origin, size: size), display: true)
         return placed.side
     }
