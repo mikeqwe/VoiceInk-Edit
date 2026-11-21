@@ -1,6 +1,6 @@
-# About this fork
+# VoiceInk Edit
 
-This is a fork of [VoiceInk](https://github.com/Beingpax/VoiceInk) with a few additions for
+VoiceInk Edit is a fork of [VoiceInk](https://github.com/Beingpax/VoiceInk) with a few additions for
 editing text by keyboard and voice. Everything works with a normal keyboard: bind the shortcuts
 you like in VoiceInk's Settings. It is built from source and has no automatic updates: pull and
 rebuild to update. Upstream's README, license (GPL-3.0) and build instructions apply.
@@ -43,9 +43,8 @@ defaults write com.prakashjoshipax.VoiceInk suggestMoreKeyLabel -string "F16"  #
 Requirements: those in [BUILDING.md](../BUILDING.md) (macOS 15, Xcode with Swift 6.2, Git).
 
 ```bash
-git clone FORK_CLONE_URL VoiceInk-fork
-cd VoiceInk-fork
-git checkout FORK_BRANCH
+git clone --branch edit https://github.com/mikeqwe/VoiceInk-Edit.git
+cd VoiceInk-Edit
 fork/scripts/build-and-install.sh
 ```
 

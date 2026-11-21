@@ -20,7 +20,7 @@
 
 ---
 
-> **This is a fork.** It adds Suggest Replacement (numbered replacements for the selected text),
+> **VoiceInk Edit** is a fork of VoiceInk. It adds Suggest Replacement (numbered replacements for the selected text),
 > a selection-aware Quick Add, web accessibility that stays on in the Electron apps you list, a
 > configurable Hybrid hold threshold, and a Rewrite mode that never pastes an unrewritten take.
 > It is built from source with no automatic updates. What each addition does, how to bind it,
