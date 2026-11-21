@@ -586,10 +586,70 @@ final class SuggestTests: XCTestCase {
         let segments = SuggestCore.segments(of: option, original: original)
         XCTAssertEqual(segments.map(\.text).joined(), option, "the runs give the option back unchanged")
         XCTAssertEqual(lit("we were going to ship it tomorrow", "we was going to ship it tomorrow"), ["were"])
-        XCTAssertEqual(lit("Migration done yesterday", "The migration was finished yesterday"), ["Migration done"],
+        XCTAssertEqual(lit("we were gonna ship it tomorrow", "we was going to ship it tomorrow"), ["were gonna"],
                        "a space between two lit words is lit with them")
-        XCTAssertEqual(lit("first line\nsecond line", "first lien\nsecond lien"), ["line", "line"])
-        XCTAssertEqual(lit("we're shipping", "we are shipping"), ["we're"], "an apostrophe stays inside its word")
+        XCTAssertEqual(lit("first line\nsecond line", "first lien\nsecond lien"), ["line", "line"],
+                       "four words, two kept: half is enough to mark")
+        XCTAssertEqual(lit("we're shipping it on Friday", "we are shipping it on Friday"), ["we're"],
+                       "an apostrophe stays inside its word")
+    }
+
+    // MARK: Marks only where they help (F9)
+
+    private func unmarked(_ option: String, _ original: String, _ message: String, line: UInt = #line) {
+        XCTAssertEqual(SuggestCore.segments(of: option, original: original), [SuggestCore.Segment(text: option, changed: false)],
+                       message, line: line)
+    }
+
+    /// The 231-character fragment of the long-fragment check (F4), with the three options a live
+    /// list showed for it.
+    private let f4Fragment = "The migration was finished yesterday but we still seeing some errors on the old endpoints, mostly timeouts, and I think we should keep the fallback for one more week before removing it, so nobody get paged during the weekend again."
+
+    func testTheOwnersRealTimeListShowsNoMarks() {
+        // Reported on 21.11: «real-time» selected, and every option was lit end to end.
+        for option in ["в реальном времени", "в режиме реального времени", "live", "в live-режиме", "онлайн"] {
+            unmarked(option, "real-time", "«\(option)» for «real-time»")
+        }
+    }
+
+    func testAShortPhraseShowsNoMarks() {
+        for (option, original) in [("на лету", "on the fly"), ("meanwhile", "in the meantime"), ("rough draft", "first cut")] {
+            unmarked(option, original, "an unrelated phrase for «\(original)»")
+        }
+        unmarked("send the summary", "send the report",
+                 "three words are taken in at a glance: no marks even when the option keeps two of them")
+    }
+
+    func testFourWordsAreLongEnoughToMark() {
+        XCTAssertEqual(lit("send the summary today", "send the report today"), ["summary"])
+    }
+
+    func testACompoundIsOneWord() {
+        // As one word each, "real-time" and "end-to-end" make a two-word original: too short to
+        // mark. Split at the hyphens it would be five words, four of them kept, with "world" lit.
+        unmarked("real-world end-to-end", "real-time end-to-end", "hyphenated compounds count as one word each")
+        unmarked("we're done", "we are done", "an apostrophe compound is one word: two words in the option, three in the original, none marked")
+        XCTAssertEqual(lit("a real-world sync job", "a real-time sync job"), ["real-world"],
+                       "a changed compound is lit whole")
+    }
+
+    func testTheF4FragmentIsMarkedAsBefore() {
+        XCTAssertEqual(lit("The migration was finished yesterday, but we are still seeing some errors on the old endpoints, mostly timeouts, and I think we should keep the fallback for one more week before removing it, so nobody gets paged during the weekend again.", f4Fragment),
+                       [",", "are", "gets"])
+        XCTAssertEqual(lit("The migration was finished yesterday, but we're still seeing some errors on the old endpoints, mostly timeouts, and I think we should keep the fallback for one more week before removing it, so nobody gets paged during the weekend again.", f4Fragment),
+                       [",", "we're", "gets"])
+        XCTAssertEqual(lit("The migration was finished yesterday but we are still seeing some errors on the old endpoints, mostly timeouts, and I think we should keep the fallback for one more week before removing it, so nobody gets paged over the weekend again.", f4Fragment),
+                       ["are", "gets", "over"])
+    }
+
+    func testARewriteOfALongFragmentShowsNoMarks() {
+        let rewrite = "Yesterday's cutover is done, yet legacy calls still time out now and then, so let's leave the safety net in place another seven days and spare the on-call rota a noisy weekend."
+        unmarked(rewrite, f4Fragment, "an option that keeps almost none of the fragment's words is a rewrite")
+        unmarked("Apples, pears, plums, cherries", "Bread, milk, eggs, cherries",
+                 "only words count as kept: one word of four, though all three commas match")
+        // Judged per option: a near-copy in the same list keeps its marks.
+        XCTAssertEqual(lit("The migration was finished yesterday but we are still seeing some errors on the old endpoints, mostly timeouts, and I think we should keep the fallback for one more week before removing it, so nobody gets paged during the weekend again.", f4Fragment),
+                       ["are", "gets"])
     }
 
     func testNoMarkingForASingleWordSelection() {

@@ -1009,7 +1009,7 @@ struct SuggestPanelView: View {
         .accessibilityIdentifier("suggest-item-\(line)")
     }
 
-    /// The option, with what it adds to a multi-word original lit.
+    /// The option, with what it adds to the original lit where marking helps (`SuggestCore.segments`).
     private func optionText(_ text: String) -> Text {
         var attributed = AttributedString()
         for segment in SuggestCore.segments(of: text, original: model.original ?? "") {

@@ -705,19 +705,32 @@ enum SuggestCore {
         let changed: Bool
     }
 
+    /// Marks only help in an original long enough to compare (F9): up to three words is a phrase
+    /// the reader takes in at a glance, so nothing in it is marked.
+    static let minimumMarkedOriginalWords = 4
+
+    /// An option is marked only when it keeps at least this share of the original's words (F9).
+    /// Below it the option is a rewrite: nearly all of it would be lit, and the few unlit words
+    /// are chance matches like "the" or "в", so the marks say nothing.
+    static let minimumKeptWordShare = 0.5
+
     /// The option split into runs, with the words and punctuation that are not in the original lit.
     /// A local word-level diff: the longest common subsequence of the two texts' words and
     /// punctuation marks, compared exactly. Spaces between two lit tokens are lit with them, other
-    /// spaces are not. A one-word original gives the option as one unmarked run: the whole word is
-    /// the change, and marking it says nothing.
+    /// spaces are not. The option comes back as one unmarked run when the original has fewer than
+    /// `minimumMarkedOriginalWords` words, or when the option keeps less than
+    /// `minimumKeptWordShare` of them: the marks would light all of it. Each option is judged on
+    /// its own, so its marks never depend on what else the list holds.
     static func segments(of option: String, original: String) -> [Segment] {
+        let unmarked = option.isEmpty ? [] : [Segment(text: option, changed: false)]
         let originalTokens = tokens(of: original).filter { !$0.isSpace }
-        guard originalTokens.filter(\.isWord).count >= 2 else {
-            return option.isEmpty ? [] : [Segment(text: option, changed: false)]
-        }
+        let originalWordCount = originalTokens.filter(\.isWord).count
+        guard originalWordCount >= minimumMarkedOriginalWords else { return unmarked }
         let optionTokens = tokens(of: option)
         let words = optionTokens.indices.filter { !optionTokens[$0].isSpace }
         let kept = commonSubsequence(words.map { optionTokens[$0].text }, originalTokens.map(\.text))
+        let keptWordCount = kept.filter { optionTokens[words[$0]].isWord }.count
+        guard Double(keptWordCount) >= minimumKeptWordShare * Double(originalWordCount) else { return unmarked }
         var changed = [Bool](repeating: false, count: optionTokens.count)
         for (position, index) in words.enumerated() where !kept.contains(position) {
             changed[index] = true
@@ -743,8 +756,12 @@ enum SuggestCore {
         let isSpace: Bool
     }
 
-    /// Words (letters, digits, and an apostrophe inside a word), single punctuation marks and runs
-    /// of whitespace, in order; joined back they give the text unchanged.
+    /// Words (letters, digits, and an apostrophe or hyphen inside a word: "we're" and "real-time"
+    /// are one word each), single punctuation marks and runs of whitespace, in order; joined back
+    /// they give the text unchanged.
+    /// Hyphen-minus, hyphen and non-breaking hyphen; a dash is not a hyphen.
+    private static let hyphens: Set<Character> = ["-", "\u{2010}", "\u{2011}"]
+
     private static func tokens(of text: String) -> [Token] {
         var result: [Token] = []
         var current = ""
@@ -756,9 +773,11 @@ enum SuggestCore {
         }
         let characters = Array(text)
         for (index, character) in characters.enumerated() {
+            let next = index + 1 < characters.count ? characters[index + 1] : nil
             let isWordCharacter = character.isLetter || character.isNumber
-                || ((character == "'" || character == "’") && currentKind == 1
-                    && index + 1 < characters.count && characters[index + 1].isLetter)
+                || ((character == "'" || character == "’") && currentKind == 1 && next?.isLetter == true)
+                || (Self.hyphens.contains(character) && currentKind == 1
+                    && (next?.isLetter == true || next?.isNumber == true))
             let kind = isWordCharacter ? 1 : character.isWhitespace ? 2 : 3
             if kind == 3 {
                 flush()
