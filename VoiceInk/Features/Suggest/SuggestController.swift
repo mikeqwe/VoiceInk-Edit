@@ -623,12 +623,14 @@ enum SuggestAnchorReader {
 }
 
 /// What closes the list besides its keys and clicks (F7, `SuggestCore.closeReason`): a mouse
-/// button down in any other app, another app becoming active, and the app's focused element
-/// changing away from the one the list opened on. Read-only: a global event monitor, a workspace
-/// notification and an Accessibility observer, all removed by `stop`.
+/// button down in any other app, another app becoming active, the app's focused element
+/// changing away from the one the list opened on, and a key that changes the text. Read-only:
+/// global event monitors (they see events and never consume them, so a typed key still reaches
+/// the app), a workspace notification and an Accessibility observer, all removed by `stop`.
 @MainActor
 final class SuggestOutsideWatch {
     private var mouseMonitor: Any?
+    private var keyMonitor: Any?
     private var activation: NSObjectProtocol?
     private var observer: AXObserver?
     private let focused: AXUIElement?
@@ -641,6 +643,13 @@ final class SuggestOutsideWatch {
         // Only events bound for other apps reach a global monitor, so a click on the list never does.
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
             Task { @MainActor in self?.emit(.mouseDown) }
+        }
+        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let flags = event.modifierFlags
+            let key = SuggestCore.TypedKey(
+                keyCode: event.keyCode, characters: event.characters ?? "",
+                command: flags.contains(.command), control: flags.contains(.control))
+            Task { @MainActor in self?.emit(.keyDown(key)) }
         }
         activation = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
@@ -682,6 +691,8 @@ final class SuggestOutsideWatch {
         stopped = true
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
         mouseMonitor = nil
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
         if let activation { NSWorkspace.shared.notificationCenter.removeObserver(activation) }
         activation = nil
         if let observer {

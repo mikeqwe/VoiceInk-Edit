@@ -445,11 +445,36 @@ enum SuggestCore {
         case appActivated(isTarget: Bool)
         /// The app's focused element changed; `isSame`: it is still the element focused at the open.
         case focusChanged(isSame: Bool)
+        /// A key went down in another app. The list's own keys never get here: its shortcut
+        /// monitor consumes them first.
+        case keyDown(TypedKey)
+    }
+
+    /// A key pressed in another app while the list shows, as a global key monitor sees it.
+    struct TypedKey: Equatable, Sendable {
+        let keyCode: UInt16
+        /// What the key produced (`NSEvent.characters`): empty for a dead key.
+        let characters: String
+        let command: Bool
+        let control: Bool
+    }
+
+    /// Whether a key changes the text the list would replace: Delete or Forward Delete with any
+    /// modifiers, or a key that types a visible character or a space without ⌘ or ⌃. Arrows and
+    /// the other navigation and function keys (U+F700–U+F8FF), ⏎, Tab, Esc, ⌘ and ⌃ chords and the
+    /// list's own keys do not. The key itself always reaches the app: this only decides the close.
+    static func changesText(_ key: TypedKey) -> Bool {
+        if keyBindings.contains(where: { $0.keyCode == key.keyCode && $0.command == key.command }) { return false }
+        if key.keyCode == 51 || key.keyCode == 117 { return true }  // kVK_Delete, kVK_ForwardDelete
+        guard !key.command, !key.control else { return false }
+        return key.characters.unicodeScalars.contains { scalar in
+            !CharacterSet.controlCharacters.contains(scalar) && !(0xF700...0xF8FF).contains(scalar.value)
+        }
     }
 
     /// Whether the list closes, as Esc does, for an outside event, and the reason it logs. A popover
-    /// and a menu close when people click outside them (HIG, Popovers); an app switch or a focus
-    /// change leaves the selection the list would replace behind. A pick being pasted is never cut
+    /// and a menu close when people click outside them (HIG, Popovers); an app switch, a focus
+    /// change or typing leaves the selection the list would replace behind. A pick being pasted is never cut
     /// short: its list is already going, and the paste's own focus changes must not end it.
     static func closeReason(for event: OutsideEvent, phase: Session.Phase) -> String? {
         switch phase {
@@ -460,6 +485,7 @@ enum SuggestCore {
             case .mouseDown: return "click-outside"
             case .appActivated(let isTarget): return isTarget ? nil : "app-switch"
             case .focusChanged(let isSame): return isSame ? nil : "focus-changed"
+            case .keyDown(let key): return changesText(key) ? "typing" : nil
             }
         }
     }

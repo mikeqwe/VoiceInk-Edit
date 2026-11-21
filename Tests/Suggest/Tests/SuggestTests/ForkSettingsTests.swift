@@ -57,3 +57,43 @@ final class ForkSettingsTests: XCTestCase {
         XCTAssertEqual(Hints.more(keyLabel: "△", boundShortcut: "⌃⌥F16"), "△ more")
     }
 }
+
+/// Typing while the list shows closes it, nothing pasted; the key still reaches the app.
+final class SuggestTypingClosesTests: XCTestCase {
+    private func key(_ code: UInt16, _ characters: String, command: Bool = false, control: Bool = false) -> SuggestCore.TypedKey {
+        SuggestCore.TypedKey(keyCode: code, characters: characters, command: command, control: control)
+    }
+
+    func testTextChangingKeysCloseTheList() {
+        let closing: [(String, SuggestCore.TypedKey)] = [
+            ("a", key(0, "a")), ("⇧A", key(0, "A")), ("ф", key(3, "ф")), ("space", key(49, " ")),
+            ("⌥e then é", key(14, "é")), ("comma", key(43, ",")),
+            ("Delete", key(51, "\u{7F}")), ("⌥Delete", key(51, "\u{7F}")), ("⌘Delete", key(51, "\u{7F}", command: true)),
+            ("Forward Delete", key(117, "\u{F728}")),
+            ("keypad 5 without ⌘", key(87, "5")),
+        ]
+        for (name, typed) in closing {
+            XCTAssertTrue(SuggestCore.changesText(typed), name)
+            for phase in [SuggestCore.Session.Phase.thinking, .ready(["x"])] {
+                XCTAssertEqual(SuggestCore.closeReason(for: .keyDown(typed), phase: phase), "typing", name)
+            }
+            XCTAssertNil(SuggestCore.closeReason(for: .keyDown(typed), phase: .picked(line: 1)), "a pick being pasted is never cut short: \(name)")
+        }
+    }
+
+    func testNavigationModifierChordsReturnAndOwnedKeysKeepTheList() {
+        let keeping: [(String, SuggestCore.TypedKey)] = [
+            ("←", key(123, "\u{F702}")), ("→", key(124, "\u{F703}")), ("↑", key(126, "\u{F700}")), ("↓", key(125, "\u{F701}")),
+            ("⌥⇧←", key(123, "\u{F702}")), ("Home", key(115, "\u{F729}")), ("Page Down", key(121, "\u{F72D}")),
+            ("F16", key(106, "\u{F713}")), ("⌃⌥F16", key(106, "\u{F713}", control: true)),
+            ("⏎", key(36, "\r")), ("keypad Enter", key(76, "\u{3}")), ("Tab", key(48, "\t")), ("Esc", key(53, "\u{1B}")),
+            ("⌘C", key(8, "c", command: true)), ("⌘V", key(9, "v", command: true)), ("⌃A", key(0, "\u{1}", control: true)),
+            ("dead key", key(14, "")),
+            ("top-row 3, owned", key(20, "3")), ("⌘ keypad 2, owned", key(84, "2", command: true)),
+        ]
+        for (name, typed) in keeping {
+            XCTAssertFalse(SuggestCore.changesText(typed), name)
+            XCTAssertNil(SuggestCore.closeReason(for: .keyDown(typed), phase: .ready(["x"])), name)
+        }
+    }
+}
