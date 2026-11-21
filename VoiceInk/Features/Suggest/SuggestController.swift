@@ -35,6 +35,8 @@ final class SuggestController {
         let systemPrompt: String
         let provider: AIProvider
         let model: String?
+        /// The user's vocabulary terms: the misspelling guard never drops them.
+        let vocabulary: [String]
     }
 
     /// Suggest waits at least this long for the model. The whole field text can be tens of
@@ -249,19 +251,22 @@ final class SuggestController {
         let context = await SuggestContextReader.read(processID: processID, selection: selection)
         guard isCurrent else { return }
         session?.rawSelectionRead(context.around?.selected)
-        let vocabulary = CustomVocabularyService.shared.loadSavedVocabulary(from: modelContext).enhancementSection
+        let vocabulary = CustomVocabularyService.shared.loadSavedVocabulary(from: modelContext)
         let request = Request(
             selection: selection,
             context: context,
-            systemPrompt: [SuggestCore.systemPrompt, vocabulary].filter { !$0.isEmpty }.joined(separator: "\n\n"),
+            systemPrompt: [SuggestCore.systemPrompt, vocabulary.enhancementSection].filter { !$0.isEmpty }.joined(separator: "\n\n"),
             provider: target.provider,
-            model: target.model
+            model: target.model,
+            vocabulary: vocabulary.terms
         )
         asked = request
         await ask(request, rejected: [])
     }
 
-    private func ask(_ request: Request, rejected: [String]) async {
+    /// Fork F8: an answer with no usable option (not JSON, or every item dropped) is asked once
+    /// more before the notice; F7 saw 5 such answers in 41.
+    private func ask(_ request: Request, rejected: [String], attempt: Int = 1) async {
         let message = SuggestCore.userMessage(selection: request.selection, context: request.context, rejected: rejected)
         let context = request.context
         let aroundChars = context.around.map { $0.before.utf16.count + $0.after.utf16.count } ?? 0
@@ -279,10 +284,17 @@ final class SuggestController {
                 retryOnTimeout: false
             )
             guard isCurrent else { return }
+            let spelling = SuggestCore.Spelling(isWord: SuggestSpelling.isWord, vocabulary: request.vocabulary)
             let items = SuggestCore.replacements(
-                fromModelOutput: completion.text, original: request.selection, excluding: rejected)
-            let answered = SuggestCore.answerItemCount(completion.text).map(String.init) ?? "not-json"
-            Self.logger.notice("Suggest answer items=\(answered, privacy: .public) kept=\(items.count, privacy: .public) chars=\(completion.text.count, privacy: .public)")
+                fromModelOutput: completion.text, original: request.selection, excluding: rejected, spelling: spelling)
+            let answered = SuggestCore.answerItemCount(completion.text).map(String.init)
+                ?? "not-json shape=\(SuggestCore.unparsedShape(completion.text))"
+            Self.logger.notice("Suggest answer items=\(answered, privacy: .public) kept=\(items.count, privacy: .public) misspelled=\(SuggestCore.misspellingCount(inModelOutput: completion.text, original: request.selection, spelling: spelling), privacy: .public) chars=\(completion.text.count, privacy: .public) attempt=\(attempt, privacy: .public)")
+            if items.isEmpty, attempt == 1 {
+                Self.logger.notice("Suggest retry reason=no-usable-option")
+                await ask(request, rejected: rejected, attempt: 2)
+                return
+            }
             guard !items.isEmpty else {
                 fail("Suggest: no \(rejected.isEmpty ? "" : "new ")replacements came back. Nothing was changed.", reason: "empty-answer")
                 return
@@ -1106,5 +1118,20 @@ private struct SuggestKeyChip: View {
             .frame(width: badge ? 18 : nil, height: badge ? 18 : 16)
             .background(AppTheme.Surface.controlActive, in: shape)
             .overlay { if let fill { shape.fill(fill) } }
+    }
+}
+
+/// Fork F8: the system spell checker for Suggest's misspelling guard. Each word goes to the
+/// checker of its own script: the English checker passes any Cyrillic word, and a word that mixes
+/// the two scripts is never a real word.
+enum SuggestSpelling {
+    static func isWord(_ word: String) -> Bool {
+        let cyrillic = word.unicodeScalars.contains { (0x0400...0x04FF).contains($0.value) }
+        let latin = word.unicodeScalars.contains { ("a"..."z").contains($0) || ("A"..."Z").contains($0) }
+        if cyrillic && latin { return false }
+        let range = NSSpellChecker.shared.checkSpelling(
+            of: word, startingAt: 0, language: cyrillic ? "ru" : "en", wrap: false,
+            inSpellDocumentWithTag: 0, wordCount: nil)
+        return range.location == NSNotFound
     }
 }
