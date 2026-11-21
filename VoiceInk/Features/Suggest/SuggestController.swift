@@ -24,7 +24,7 @@ final class SuggestController {
     private var openGeneration = 0
     /// The selection read for a press while a run is open (F6), until it decides that press.
     private var pressCheck: Task<Void, Never>?
-    /// The last press's arguments (F7), so a click on "△ more" acts as another press.
+    /// The last press's arguments (F7), so a click on "more" acts as another press.
     private var lastPress: (modelContext: ModelContext, isRecorderVisible: Bool)?
     /// Watches for a click outside the list, an app switch and a focus change while it shows (F7).
     private var outsideWatch: SuggestOutsideWatch?
@@ -157,7 +157,7 @@ final class SuggestController {
     }
 
     /// A click on the list (F7): a row or the esc chip through the same session as the keys, so a
-    /// click picks through the same single paste as a digit; "△ more" as another press.
+    /// click picks through the same single paste as a digit; "more" as another press.
     private func handleClick(_ target: SuggestCore.Target) {
         guard var session else { return }
         if target == .more {
@@ -705,7 +705,7 @@ final class SuggestPanelModel: ObservableObject {
     @Published var pointer = SuggestCore.Pointer()
     /// Where each clickable part is, in the panel's top-left coordinates, as the view lays it out.
     var frames: [SuggestCore.Target: CGRect] = [:]
-    /// A click on a row, the esc chip or "△ more", or VoiceOver's press on one.
+    /// A click on a row, the esc chip or "more", or VoiceOver's press on one.
     var onClick: ((SuggestCore.Target) -> Void)?
 }
 
@@ -1011,10 +1011,17 @@ struct SuggestPanelView: View {
 
     private func footer(count: Int) -> some View {
         HStack(spacing: 0) {
-            Text(verbatim: "Fn + \(count == 1 ? "1" : "1–\(count)") paste · ")
+            Text(verbatim: SuggestCore.FooterHints.pick(
+                count: count,
+                keyLabel: UserDefaults.standard.string(forKey: SuggestCore.FooterHints.pickKeyLabelDefaultsKey)
+            ) + " · ")
                 .accessibilityIdentifier("suggest-footer")
-            // "△ more" does what the △ key does (F7): a new set, or a fresh run for a new selection.
-            Text(verbatim: "△ more")
+            // "more" does what another press of the Suggest shortcut does (F7): a new set, or a
+            // fresh run for a new selection.
+            Text(verbatim: SuggestCore.FooterHints.more(
+                keyLabel: UserDefaults.standard.string(forKey: SuggestCore.FooterHints.moreKeyLabelDefaultsKey),
+                boundShortcut: ShortcutStore.shortcut(for: .suggestReplacement)?.displayString
+            ))
                 .padding(.horizontal, 3)
                 .padding(.vertical, 1)
                 .background {

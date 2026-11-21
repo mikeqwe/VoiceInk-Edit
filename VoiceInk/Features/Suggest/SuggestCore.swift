@@ -196,6 +196,32 @@ enum SuggestCore {
         return nil
     }
 
+    // MARK: - Footer hints
+
+    /// What the footer says under the list: which keys paste a line, and which key gives a new set.
+    /// The key names come from two optional settings, for a keyboard or macro pad whose keys send
+    /// other codes (`suggestPickKeyLabel`, e.g. "Fn", is put before the digits; `suggestMoreKeyLabel`
+    /// names the key that sends the Suggest shortcut). Unset or blank: the digits alone, and the
+    /// bound Suggest shortcut as macOS writes it, or just "more" when none is bound.
+    enum FooterHints {
+        static let pickKeyLabelDefaultsKey = "suggestPickKeyLabel"
+        static let moreKeyLabelDefaultsKey = "suggestMoreKeyLabel"
+
+        static func pick(count: Int, keyLabel: String?) -> String {
+            let digits = count == 1 ? "1" : "1–\(count)"
+            return (nonBlank(keyLabel).map { "\($0) + " } ?? "") + "\(digits) paste"
+        }
+
+        static func more(keyLabel: String?, boundShortcut: String?) -> String {
+            (nonBlank(keyLabel) ?? nonBlank(boundShortcut)).map { "\($0) more" } ?? "more"
+        }
+
+        private static func nonBlank(_ text: String?) -> String? {
+            guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+            return trimmed
+        }
+    }
+
     // MARK: - Keys the list owns
 
     enum Key: Equatable, Sendable {
@@ -207,14 +233,14 @@ enum SuggestCore {
 
     struct KeyBinding: Equatable, Sendable {
         let keyCode: UInt16
-        /// ⌘ held: the pad's Fn digits arrive as ⌘ + keypad digit.
+        /// ⌘ held: ⌘ + keypad digit, as a macro pad's digit layer can send it.
         let command: Bool
         let key: Key
     }
 
     /// Every key the list consumes from the moment it opens until it closes:
-    /// - the pad's Fn digits, ⌘ + keypad 1–9 (pad/keymap.json, layer fn), matched by key
-    ///   code with the keypad flag ignored;
+    /// - ⌘ + keypad 1–9 (what a macro pad's digit layer can send), matched by key code with the
+    ///   keypad flag ignored;
     /// - the plain top-row digits 1–9 and 0 of the main keyboard;
     /// - Esc.
     /// Return and keypad Enter are not here: a ⏎ always reaches the app.
@@ -351,7 +377,7 @@ enum SuggestCore {
 
     // MARK: - The pointer (F7)
 
-    /// What the pointer can act on in the list: a row, the esc chip, "△ more" in the footer, or the
+    /// What the pointer can act on in the list: a row, the esc chip, "more" in the footer, or the
     /// original on the top line (hover only: it shows the whole original when it is cut).
     enum Target: Hashable, Sendable {
         case row(Int)

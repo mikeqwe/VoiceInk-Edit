@@ -102,6 +102,14 @@ struct GeneralBackup: Codable {
     let isAutoLearnDictionaryEnabled: Bool?
     let autoLearnMinimumCorrections: Int?
     let autoLearnAIReviewMode: String?
+
+    // Fork settings. Each is optional, so upstream backups still import and an absent one changes nothing.
+    let suggestReplacementShortcut: ShortcutBackup?
+    let hybridHoldThreshold: Double?
+    let keepWebAccessibilityOn: Bool?
+    let webAccessibilityKeepOnApps: [String]?
+    let suggestPickKeyLabel: String?
+    let suggestMoreKeyLabel: String?
 }
 
 struct WordBackup: Codable {

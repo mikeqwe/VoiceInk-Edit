@@ -70,25 +70,26 @@ final class SuggestTests: XCTestCase {
         XCTAssertEqual(SuggestCore.variantKey("…"), "…", "a punctuation-only text is its own key")
     }
 
-    /// F5: web accessibility stays on only in T3 Code and Slack, and only while the defaults key
-    /// allows it. Every other app gets back the value it had, as upstream does.
+    /// F5: web accessibility stays on only in the listed apps (by default T3 Code and Slack), and only
+    /// while the switch allows it. Every other app gets back the value it had, as upstream does.
     func testOnlyListedAppsKeepWebAccessibilityOn() {
-        for listed in ["com.t3tools.t3code", "com.tinyspeck.slackmacgap"] {
-            XCTAssertTrue(WebAccessibilityKeepOn.keepsOn(bundleIdentifier: listed, enabled: true), listed)
-            XCTAssertNil(WebAccessibilityKeepOn.valueAfterRead(previous: false, bundleIdentifier: listed, enabled: true), listed)
+        let listed = WebAccessibilityKeepOn.defaultBundleIdentifiers
+        for app in listed {
+            XCTAssertTrue(WebAccessibilityKeepOn.keepsOn(bundleIdentifier: app, enabled: true, listed: listed), app)
+            XCTAssertNil(WebAccessibilityKeepOn.valueAfterRead(previous: false, bundleIdentifier: app, enabled: true, listed: listed), app)
             // The off switch: back to today's restore.
-            XCTAssertFalse(WebAccessibilityKeepOn.keepsOn(bundleIdentifier: listed, enabled: false), listed)
-            XCTAssertEqual(WebAccessibilityKeepOn.valueAfterRead(previous: false, bundleIdentifier: listed, enabled: false), false, listed)
+            XCTAssertFalse(WebAccessibilityKeepOn.keepsOn(bundleIdentifier: app, enabled: false, listed: listed), app)
+            XCTAssertEqual(WebAccessibilityKeepOn.valueAfterRead(previous: false, bundleIdentifier: app, enabled: false, listed: listed), false, app)
         }
         // Other Electron and Chromium apps are not on the list.
         for other in ["com.microsoft.VSCode", "com.hnc.Discord", "com.google.Chrome", "com.t3tools.t3code.helper", "", nil] as [String?] {
-            XCTAssertFalse(WebAccessibilityKeepOn.keepsOn(bundleIdentifier: other, enabled: true), other ?? "nil")
-            XCTAssertEqual(WebAccessibilityKeepOn.valueAfterRead(previous: false, bundleIdentifier: other, enabled: true), false, other ?? "nil")
+            XCTAssertFalse(WebAccessibilityKeepOn.keepsOn(bundleIdentifier: other, enabled: true, listed: listed), other ?? "nil")
+            XCTAssertEqual(WebAccessibilityKeepOn.valueAfterRead(previous: false, bundleIdentifier: other, enabled: true, listed: listed), false, other ?? "nil")
         }
         // On before the read: it is put back on, listed or not.
-        XCTAssertEqual(WebAccessibilityKeepOn.valueAfterRead(previous: true, bundleIdentifier: "com.microsoft.VSCode", enabled: true), true)
-        XCTAssertEqual(WebAccessibilityKeepOn.valueAfterRead(previous: true, bundleIdentifier: "com.t3tools.t3code", enabled: true), true)
-        XCTAssertEqual(WebAccessibilityKeepOn.bundleIdentifiers, ["com.t3tools.t3code", "com.tinyspeck.slackmacgap"])
+        XCTAssertEqual(WebAccessibilityKeepOn.valueAfterRead(previous: true, bundleIdentifier: "com.microsoft.VSCode", enabled: true, listed: listed), true)
+        XCTAssertEqual(WebAccessibilityKeepOn.valueAfterRead(previous: true, bundleIdentifier: "com.t3tools.t3code", enabled: true, listed: listed), true)
+        XCTAssertEqual(WebAccessibilityKeepOn.defaultBundleIdentifiers, ["com.t3tools.t3code", "com.tinyspeck.slackmacgap"])
     }
 
     func testAtMostFiveReplacements() {

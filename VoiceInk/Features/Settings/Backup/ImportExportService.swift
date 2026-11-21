@@ -190,7 +190,13 @@ class ImportExportService {
             finishAndSendKey: FinishAndSendSettings.selectedKey.rawValue,
             isAutoLearnDictionaryEnabled: AutoLearnSettings.isEnabled,
             autoLearnMinimumCorrections: AutoLearnSettings.minimumCorrections,
-            autoLearnAIReviewMode: AutoLearnSettings.aiReviewMode.rawValue
+            autoLearnAIReviewMode: AutoLearnSettings.aiReviewMode.rawValue,
+            suggestReplacementShortcut: ShortcutStore.shortcut(for: .suggestReplacement).map(ShortcutBackup.init),
+            hybridHoldThreshold: RecordingShortcutManager.HybridHoldThreshold.current,
+            keepWebAccessibilityOn: WebAccessibilityKeepOn.isEnabled(),
+            webAccessibilityKeepOnApps: WebAccessibilityKeepOn.bundleIdentifiers(),
+            suggestPickKeyLabel: UserDefaults.standard.string(forKey: SuggestCore.FooterHints.pickKeyLabelDefaultsKey),
+            suggestMoreKeyLabel: UserDefaults.standard.string(forKey: SuggestCore.FooterHints.moreKeyLabelDefaultsKey)
         )
 
         let exportedSettings = BackupFile(

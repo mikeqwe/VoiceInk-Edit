@@ -152,6 +152,8 @@ struct SettingsView: View {
 
             }
 
+            SuggestSettingsSection()  // Fork
+
             Section("Pasting") {
                 Picker(selection: $finishAndSendKey) {
                     ForEach(FinishAndSendKey.allCases, id: \.self) { key in

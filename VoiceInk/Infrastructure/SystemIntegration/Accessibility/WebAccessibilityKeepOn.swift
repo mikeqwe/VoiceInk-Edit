@@ -2,43 +2,70 @@ import AppKit
 import ApplicationServices
 import os
 
-/// Fork F5: web accessibility stays on in the apps listed here.
+/// Fork F5: web accessibility stays on in the apps the user lists (Settings → Suggest).
 ///
 /// Electron apps expose their full text to Accessibility only while `AXManualAccessibility` is on.
 /// Electron turns it on two seconds after the last on or off request, and an off inside that window
 /// cancels it (`enableScreenReaderCompleteModeAfterDelay:` in `shell/browser/mac/electron_application.mm`,
 /// v43 and v44). VoiceInk's reader turns it on for a read and back off right after, so in these apps
-/// every read flips the switch and the full tree never appears. For the apps here, VoiceInk turns it
+/// every read flips the switch and the full tree never appears. For the listed apps, VoiceInk turns it
 /// on when VoiceInk starts and whenever one becomes active, and its readers never turn it back off.
 ///
-/// Off switch, with no rebuild or restart: `defaults write com.prakashjoshipax.VoiceInk
-/// keepWebAccessibilityOn -bool false`. Apps keep what they have until they restart or the
-/// attribute is set off.
+/// Settings: the switch `keepWebAccessibilityOn` (on unless set to false) and the list
+/// `webAccessibilityKeepOnApps` (bundle identifiers; absent means `defaultBundleIdentifiers`).
+/// Both are read at each use, so a change needs no restart. Apps keep what they have until they
+/// restart or the attribute is set off.
 enum WebAccessibilityKeepOn {
-    static let bundleIdentifiers: Set<String> = ["com.t3tools.t3code", "com.tinyspeck.slackmacgap"]
+    static let defaultBundleIdentifiers: [String] = ["com.t3tools.t3code", "com.tinyspeck.slackmacgap"]
     static let defaultsKey = "keepWebAccessibilityOn"
+    static let appsDefaultsKey = "webAccessibilityKeepOnApps"
     static let attribute = "AXManualAccessibility"
+    private static let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "WebAccessibility")
 
-    /// On unless the defaults key is set to false.
-    static var isEnabled: Bool {
-        UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+    /// On unless the switch is set to false.
+    static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: defaultsKey) as? Bool ?? true
     }
 
-    static func keepsOn(bundleIdentifier: String?, enabled: Bool) -> Bool {
+    /// The listed apps, in the order the user added them. No stored list: the default list.
+    /// A stored value that is not a list of strings lists no app (upstream behaviour), and is logged.
+    static func bundleIdentifiers(in defaults: UserDefaults = .standard) -> [String] {
+        guard let stored = defaults.object(forKey: appsDefaultsKey) else { return defaultBundleIdentifiers }
+        guard let list = stored as? [String] else {
+            logger.error("\(appsDefaultsKey, privacy: .public) is not a list of strings; no app keeps web accessibility on")
+            return []
+        }
+        return normalized(list)
+    }
+
+    /// Stores the list, trimmed, without empty or repeated entries.
+    static func setBundleIdentifiers(_ list: [String], in defaults: UserDefaults = .standard) {
+        defaults.set(normalized(list), forKey: appsDefaultsKey)
+    }
+
+    static func normalized(_ list: [String]) -> [String] {
+        var seen = Set<String>()
+        return list
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    static func keepsOn(bundleIdentifier: String?, enabled: Bool, listed: [String]) -> Bool {
         guard enabled, let bundleIdentifier else { return false }
-        return bundleIdentifiers.contains(bundleIdentifier)
+        return listed.contains(bundleIdentifier)
     }
 
     /// What a reader writes back when it is done: the value the app had before (`previous`), as
-    /// upstream does, or nil to write nothing, for an app on the list that had it off.
-    static func valueAfterRead(previous: Bool, bundleIdentifier: String?, enabled: Bool) -> Bool? {
-        !previous && keepsOn(bundleIdentifier: bundleIdentifier, enabled: enabled) ? nil : previous
+    /// upstream does, or nil to write nothing, for a listed app that had it off.
+    static func valueAfterRead(previous: Bool, bundleIdentifier: String?, enabled: Bool, listed: [String]) -> Bool? {
+        !previous && keepsOn(bundleIdentifier: bundleIdentifier, enabled: enabled, listed: listed) ? nil : previous
     }
 
-    /// `valueAfterRead` for a running process, with the defaults key read now.
+    /// `valueAfterRead` for a running process, with the settings read now.
     static func valueAfterRead(previous: Bool, processID: pid_t) -> Bool? {
         let bundleIdentifier = NSRunningApplication(processIdentifier: processID)?.bundleIdentifier
-        return valueAfterRead(previous: previous, bundleIdentifier: bundleIdentifier, enabled: isEnabled)
+        return valueAfterRead(previous: previous, bundleIdentifier: bundleIdentifier, enabled: isEnabled(),
+                              listed: bundleIdentifiers())
     }
 }
 
@@ -60,12 +87,18 @@ final class WebAccessibilityKeeper {
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             self?.keepOn(app)
         }
+        applyToRunningApps()
+    }
+
+    /// Turns it on in every listed app that runs now: at launch, and after the list or the switch changes.
+    func applyToRunningApps() {
         NSWorkspace.shared.runningApplications.forEach(keepOn)
     }
 
     private func keepOn(_ app: NSRunningApplication) {
         let bundleIdentifier = app.bundleIdentifier
-        guard WebAccessibilityKeepOn.keepsOn(bundleIdentifier: bundleIdentifier, enabled: WebAccessibilityKeepOn.isEnabled) else { return }
+        guard WebAccessibilityKeepOn.keepsOn(bundleIdentifier: bundleIdentifier, enabled: WebAccessibilityKeepOn.isEnabled(),
+                                             listed: WebAccessibilityKeepOn.bundleIdentifiers()) else { return }
         let processID = app.processIdentifier
         queue.async {
             guard AXIsProcessTrusted() else { return }

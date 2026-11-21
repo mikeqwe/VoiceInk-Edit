@@ -222,7 +222,46 @@ enum BackupImporter {
             }
         }
 
+        importForkSettings(general)
+
         print("Successfully imported general settings.")
+    }
+
+    /// Fork settings from a backup: the Suggest shortcut, the Hybrid hold threshold (one of the
+    /// offered values), web accessibility, and the Suggest footer's key names (blank clears one).
+    @MainActor
+    private static func importForkSettings(_ general: GeneralBackup) {
+        if let shortcut = general.suggestReplacementShortcut {
+            ShortcutStore.setShortcut(shortcut.shortcut, for: .suggestReplacement)
+        }
+        if let threshold = general.hybridHoldThreshold {
+            if RecordingShortcutManager.HybridHoldThreshold.options.contains(threshold) {
+                UserDefaults.standard.set(threshold, forKey: RecordingShortcutManager.HybridHoldThreshold.userDefaultsKey)
+            } else {
+                print("Skipped hybridHoldThreshold \(threshold): not one of the offered values.")
+            }
+        }
+        if let keepOn = general.keepWebAccessibilityOn {
+            UserDefaults.standard.set(keepOn, forKey: WebAccessibilityKeepOn.defaultsKey)
+        }
+        if let apps = general.webAccessibilityKeepOnApps {
+            WebAccessibilityKeepOn.setBundleIdentifiers(apps)
+        }
+        for (label, key) in [
+            (general.suggestPickKeyLabel, SuggestCore.FooterHints.pickKeyLabelDefaultsKey),
+            (general.suggestMoreKeyLabel, SuggestCore.FooterHints.moreKeyLabelDefaultsKey),
+        ] {
+            guard let label else { continue }
+            let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                UserDefaults.standard.removeObject(forKey: key)
+            } else {
+                UserDefaults.standard.set(trimmed, forKey: key)
+            }
+        }
+        if general.keepWebAccessibilityOn != nil || general.webAccessibilityKeepOnApps != nil {
+            WebAccessibilityKeeper.shared.applyToRunningApps()
+        }
     }
 
     @MainActor
