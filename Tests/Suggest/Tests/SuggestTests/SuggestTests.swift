@@ -437,12 +437,12 @@ final class SuggestTests: XCTestCase {
     private let visible = CGRect(x: 0, y: 0, width: 1440, height: 875)
     private let list = CGSize(width: 300, height: 200)
 
-    func testTheListOpensJustUnderTheSelectionAtItsLeftEdge() {
+    func testTheListOpensJustUnderTheSelection() {
         // A word on a line whose bottom is 600 pt up: the list's top sits panelGap under it.
+        // F7 changed the horizontal rule (left edge → centre); `testTheListIsCentredOnTheSelectionOrItsLastLine`.
         let word = CGRect(x: 400, y: 600, width: 40, height: 18)
         let placed = SuggestCore.panelOrigin(size: list, anchor: word, visible: visible)
         XCTAssertEqual(placed.side, .below)
-        XCTAssertEqual(placed.origin.x, 400, "left edge on the selection's left edge")
         // The mockup's gap: a 26 px top under a 22 px line.
         XCTAssertEqual(placed.origin.y + list.height, 596, "top 4 pt under the selection")
         // Three selected lines: the anchor spans them, so the list goes under the last one.
@@ -450,7 +450,6 @@ final class SuggestTests: XCTestCase {
         let underLines = SuggestCore.panelOrigin(size: list, anchor: lines, visible: visible)
         XCTAssertEqual(underLines.side, .below)
         XCTAssertEqual(underLines.origin.y + list.height, 496)
-        XCTAssertEqual(underLines.origin.x, 120)
     }
 
     func testTheListFlipsAboveWhenThereIsNoRoomBelow() {
@@ -551,17 +550,18 @@ final class SuggestTests: XCTestCase {
             }
         }
         func inDocumentOrder(_ range: Range) -> Range? { orderedAvailable ? .ordered : nil }
+        func lastCharacter(_ range: Range) -> Range? { nil }
     }
 
     func testABackwardSelectionGetsItsOwnRectangle() {
         let word = CGRect(x: 249, y: 229, width: 44, height: 23)
-        let backward = SuggestCore.markerSelectionRect(FakeMarkers.Range.backward, FakeMarkers())
+        let backward = SuggestCore.markerSelectionGeometry(FakeMarkers.Range.backward, FakeMarkers())
         XCTAssertEqual(backward?.rect, word, "⌥⇧← selected: the markers in document order give the word")
         XCTAssertEqual(backward?.reordered, true)
-        let forward = SuggestCore.markerSelectionRect(FakeMarkers.Range.forward, FakeMarkers())
+        let forward = SuggestCore.markerSelectionGeometry(FakeMarkers.Range.forward, FakeMarkers())
         XCTAssertEqual(forward?.rect, word)
         XCTAssertEqual(forward?.reordered, false, "a forward selection is taken as reported")
-        XCTAssertNil(SuggestCore.markerSelectionRect(FakeMarkers.Range.backward, FakeMarkers(orderedAvailable: false)),
+        XCTAssertNil(SuggestCore.markerSelectionGeometry(FakeMarkers.Range.backward, FakeMarkers(orderedAvailable: false)),
                      "no ordered range: no rectangle, never the 0 × 0 one")
         XCTAssertNil(SuggestCore.usableTextRect(CGRect(x: 160, y: 192, width: 0, height: 0)))
         XCTAssertNil(SuggestCore.usableTextRect(CGRect(x: 160, y: 192, width: 40, height: CGFloat.infinity)))

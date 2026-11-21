@@ -193,6 +193,17 @@ enum SuggestCore {
             phase = .closed
         }
 
+        /// A click on the list (F7). A row picks exactly as its digit does, through `handle`, so a
+        /// click and a digit that arrive together paste once; the esc chip closes as Esc does. "more"
+        /// changes nothing here: the controller treats it as another press of the shortcut.
+        mutating func click(_ target: Target) -> Effect {
+            switch target {
+            case .row(let line): return handle(.pick(line))
+            case .close: return handle(.close)
+            case .more, .original: return .none
+            }
+        }
+
         mutating func handle(_ key: Key) -> Effect {
             switch (phase, key) {
             case (.closed, _), (.picked, _):
@@ -220,6 +231,95 @@ enum SuggestCore {
                 }
                 phase = .closed
                 return .withheld(decision.withheld ?? .noRewrite)
+            }
+        }
+    }
+
+    // MARK: - The pointer (F7)
+
+    /// What the pointer can act on in the list: a row, the esc chip, "△ more" in the footer, or the
+    /// original on the top line (hover only: it shows the whole original when it is cut).
+    enum Target: Hashable, Sendable {
+        case row(Int)
+        case close
+        case more
+        case original
+    }
+
+    /// The target under `point`, from the frames the view reports (one coordinate space). Rows are
+    /// laid out edge to edge, so moving between them never passes over nothing.
+    static func target(at point: CGPoint, in frames: [Target: CGRect]) -> Target? {
+        frames.first { $0.value.contains(point) }?.key
+    }
+
+    /// The pointer over the list. Hover follows the pointer only when it moves, so a list that opens
+    /// under a resting pointer highlights nothing (T3's composer menu highlights on mouse move). A
+    /// click acts on mouse-up over the target it went down on, as AppKit buttons and web clicks do;
+    /// released anywhere else, it does nothing. While held, only that target shows pressed.
+    struct Pointer: Equatable {
+        private(set) var hovered: Target?
+        private(set) var pressed: Target?
+
+        mutating func moved(over target: Target?) {
+            hovered = target
+        }
+
+        mutating func exited() {
+            hovered = nil
+        }
+
+        mutating func down(on target: Target?) {
+            hovered = target
+            pressed = target
+        }
+
+        /// The target clicked, if the press began and ended on it.
+        mutating func up(on target: Target?) -> Target? {
+            defer { pressed = nil }
+            hovered = target
+            guard let target, target == pressed else { return nil }
+            return target
+        }
+
+        /// What shows highlighted: while a press is held, its target only when the pointer is over it.
+        var highlighted: Target? {
+            guard let pressed else { return hovered }
+            return hovered == pressed ? pressed : nil
+        }
+
+        /// The list's content changed under the pointer (options arrived, a new set): nothing stays
+        /// highlighted or held until the pointer moves again.
+        mutating func reset() {
+            hovered = nil
+            pressed = nil
+        }
+    }
+
+    // MARK: - Closing when the user moves on (F7)
+
+    /// Something that happened outside the list while it shows.
+    enum OutsideEvent: Equatable, Sendable {
+        /// A mouse button went down anywhere but on the list (in any app, VoiceInk's other windows aside).
+        case mouseDown
+        /// An app became active; `isTarget`: it is the app the list was opened over.
+        case appActivated(isTarget: Bool)
+        /// The app's focused element changed; `isSame`: it is still the element focused at the open.
+        case focusChanged(isSame: Bool)
+    }
+
+    /// Whether the list closes, as Esc does, for an outside event, and the reason it logs. A popover
+    /// and a menu close when people click outside them (HIG, Popovers); an app switch or a focus
+    /// change leaves the selection the list would replace behind. A pick being pasted is never cut
+    /// short: its list is already going, and the paste's own focus changes must not end it.
+    static func closeReason(for event: OutsideEvent, phase: Session.Phase) -> String? {
+        switch phase {
+        case .picked, .closed:
+            return nil
+        case .thinking, .ready:
+            switch event {
+            case .mouseDown: return "click-outside"
+            case .appActivated(let isTarget): return isTarget ? nil : "app-switch"
+            case .focusChanged(let isSame): return isSame ? nil : "focus-changed"
             }
         }
     }
@@ -320,15 +420,19 @@ enum SuggestCore {
     }
 
     /// Where a list of `size` opens for a selection at `anchor` on a screen whose visible frame is
-    /// `visible` (all AppKit coordinates). Just under the selection, its left edge on the
-    /// selection's left edge; for a multi-line selection `anchor` spans the lines, so the list goes
-    /// under the last one. With no room below it goes above; with room on neither side, on the side
-    /// with more room. Always kept whole inside `visible`. With no anchor: `fallbackOrigin`.
+    /// `visible` (all AppKit coordinates). Just under the selection; for a multi-line selection
+    /// `anchor` spans the lines, so the list goes under the last one. With no room below it goes
+    /// above; with room on neither side, on the side with more room. Always kept whole inside
+    /// `visible`. With no anchor: `fallbackOrigin`.
+    /// Horizontally (F7) the list is centred on `centreX`: the middle of the selection, or of its
+    /// last line (`centreRect`); without one, the middle of `anchor`. Then clamped like the rest.
     /// `keeping` (F6): the side the run already took. It stays while the list fits there, so a
     /// list that grows does not jump to the other side; only a list too tall for that side moves.
-    static func panelOrigin(size: CGSize, anchor: CGRect?, visible: CGRect, keeping kept: PanelSide? = nil) -> (origin: CGPoint, side: PanelSide) {
+    static func panelOrigin(
+        size: CGSize, anchor: CGRect?, visible: CGRect, keeping kept: PanelSide? = nil, centreX: CGFloat? = nil
+    ) -> (origin: CGPoint, side: PanelSide) {
         guard let anchor else { return (fallbackOrigin(size: size, visible: visible), .fallback) }
-        let x = clamp(anchor.minX, visible.minX, visible.maxX - size.width)
+        let x = clamp((centreX ?? anchor.midX) - size.width / 2, visible.minX, visible.maxX - size.width)
         let below = anchor.minY - panelGap - size.height
         let above = anchor.maxY + panelGap
         let side: PanelSide
@@ -347,6 +451,31 @@ enum SuggestCore {
         return (CGPoint(x: x, y: y), side)
     }
 
+    // MARK: - The part of the selection the list centres on (F7)
+
+    /// The rectangle the list centres on, in Accessibility coordinates (top-left origin): the whole
+    /// selection when it is on one line, else the part of its last line that is selected, from the
+    /// selection's left edge (where the last line starts) to the end of `lastCharacter`, the
+    /// rectangle of its last visible character. A `lastCharacter` that is missing, unusable or not
+    /// inside the selection's rectangle gives the whole selection.
+    static func centreRect(selection: CGRect, lastCharacter: CGRect?) -> CGRect {
+        guard let last = usableTextRect(lastCharacter),
+            last.minY >= selection.minY + last.height / 2,
+            last.maxY <= selection.maxY + last.height / 2,
+            last.maxX <= selection.maxX + 1, last.minX >= selection.minX - 1
+        else { return selection }
+        return CGRect(x: selection.minX, y: last.minY, width: last.maxX - selection.minX, height: last.height)
+    }
+
+    /// The last visible character of a selected text, as a UTF-16 range from the selection's start:
+    /// trailing spaces and line breaks are skipped, so a selected line's break does not count as its
+    /// last line. Nil for a text of whitespace only.
+    static func lastVisibleCharacter(of selected: String) -> NSRange? {
+        guard let last = selected.lastIndex(where: { !$0.isWhitespace }) else { return nil }
+        let start = selected.utf16.distance(from: selected.utf16.startIndex, to: last.samePosition(in: selected.utf16) ?? selected.utf16.startIndex)
+        return NSRange(location: start, length: String(selected[last]).utf16.count)
+    }
+
     // MARK: - The selection's rectangle from text markers (F6)
 
     /// What the anchor reader asks a web text element (Chromium, WebKit) about its selected
@@ -359,6 +488,28 @@ enum SuggestCore {
         /// The range's own two end markers as a range in document order
         /// (`AXTextMarkerRangeForUnorderedTextMarkers`), or nil when the element cannot say.
         func inDocumentOrder(_ range: Range) -> Range?
+        /// The range's last character, as a range (F7): from the marker before its end marker
+        /// (`AXPreviousTextMarkerForTextMarker`) to its end marker; nil when the element cannot say.
+        func lastCharacter(_ range: Range) -> Range?
+    }
+
+    /// The selected text's rectangle from its marker range, the rectangle the list centres on
+    /// (`centreRect`, F7), and whether it took the range in document order. Chromium reports a
+    /// selection made backwards (its focus before its anchor, as ⌥⇧← leaves it) as a range from the
+    /// anchor back to the focus, and in a contenteditable gives that range a 0 × 0 rectangle; the
+    /// same two markers in document order give the selected text's own rectangle (F6,
+    /// `evidence/f6/params`).
+    static func markerSelectionGeometry<Q: MarkerQueries>(_ range: Q.Range, _ queries: Q) -> (rect: CGRect, centre: CGRect, reordered: Bool)? {
+        var used = range
+        var reordered = false
+        if usableTextRect(queries.bounds(range)) == nil {
+            guard let ordered = queries.inDocumentOrder(range) else { return nil }
+            used = ordered
+            reordered = true
+        }
+        guard let rect = usableTextRect(queries.bounds(used)) else { return nil }
+        let last = queries.lastCharacter(used).flatMap { queries.bounds($0) }
+        return (rect, centreRect(selection: rect, lastCharacter: last), reordered)
     }
 
     /// A rectangle that could hold text: finite, with height. Electron gives a zero rectangle when
@@ -367,18 +518,6 @@ enum SuggestCore {
         guard let rect, rect.height > 0, [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite)
         else { return nil }
         return rect
-    }
-
-    /// The selected text's rectangle from its marker range, and whether it took the range in
-    /// document order. Chromium reports a selection made backwards (its focus before its anchor,
-    /// as ⌥⇧← leaves it) as a range from the anchor back to the focus, and in a contenteditable
-    /// gives that range a 0 × 0 rectangle; the same two markers in document order give the
-    /// selected text's own rectangle (F6, `evidence/f6/params`).
-    static func markerSelectionRect<Q: MarkerQueries>(_ range: Q.Range, _ queries: Q) -> (rect: CGRect, reordered: Bool)? {
-        if let rect = usableTextRect(queries.bounds(range)) { return (rect, false) }
-        guard let ordered = queries.inDocumentOrder(range), let rect = usableTextRect(queries.bounds(ordered))
-        else { return nil }
-        return (rect, true)
     }
 
     /// Where the list opened before F4: centred on the screen, its top a quarter down.

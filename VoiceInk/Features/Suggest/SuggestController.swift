@@ -24,6 +24,10 @@ final class SuggestController {
     private var openGeneration = 0
     /// The selection read for a press while a run is open (F6), until it decides that press.
     private var pressCheck: Task<Void, Never>?
+    /// The last press's arguments (F7), so a click on "△ more" acts as another press.
+    private var lastPress: (modelContext: ModelContext, isRecorderVisible: Bool)?
+    /// Watches for a click outside the list, an app switch and a focus change while it shows (F7).
+    private var outsideWatch: SuggestOutsideWatch?
 
     private struct Request {
         let selection: String
@@ -37,7 +41,9 @@ final class SuggestController {
     /// thousands of tokens, and the list stays open in "Thinking…" with Esc to cancel.
     static let minimumRequestTimeout: TimeInterval = 30
 
-    private init() {}
+    private init() {
+        model.onClick = { [weak self] target in self?.handleClick(target) }
+    }
 
     /// The Suggest shortcut. Opens the list at once, in "thinking", and takes its keys
     /// before anything else happens, so a digit pressed early is consumed and ignored.
@@ -46,6 +52,7 @@ final class SuggestController {
     /// that excludes every option shown in this run, and the list keeps its keys meanwhile;
     /// another selection closes this run and starts a fresh one for it.
     func run(modelContext: ModelContext, isRecorderVisible: Bool) {
+        lastPress = (modelContext, isRecorderVisible)
         if let session {
             // A pick is being pasted: its text is on the clipboard, so no selection read (whose
             // Copy fallback uses the clipboard) may run now.
@@ -144,18 +151,38 @@ final class SuggestController {
         let key = SuggestCore.keyBindings[index].key
         let effect = session.handle(key)
         self.session = session
+        deliver(effect, input: "key=\(key)")
+    }
+
+    /// A click on the list (F7): a row or the esc chip through the same session as the keys, so a
+    /// click picks through the same single paste as a digit; "△ more" as another press.
+    private func handleClick(_ target: SuggestCore.Target) {
+        guard var session else { return }
+        if target == .more {
+            guard let lastPress else { return }
+            Self.logger.notice("Suggest click target=more")
+            run(modelContext: lastPress.modelContext, isRecorderVisible: lastPress.isRecorderVisible)
+            return
+        }
+        let effect = session.click(target)
+        self.session = session
+        deliver(effect, input: "click=\(target)")
+    }
+
+    private func deliver(_ effect: SuggestCore.Session.Effect, input: String) {
+        guard let session else { return }
         switch effect {
         case .none:
-            Self.logger.notice("Suggest key ignored key=\(String(describing: key), privacy: .public) phase=\(Self.phaseName(session.phase), privacy: .public)")
+            Self.logger.notice("Suggest input ignored \(input, privacy: .public) phase=\(Self.phaseName(session.phase), privacy: .public)")
         case .close:
-            Self.logger.notice("Suggest closed reason=esc")
+            Self.logger.notice("Suggest closed reason=esc \(input, privacy: .public)")
             finish()
         case .withheld(let reason):
             Self.logger.notice("Suggest withheld reason=\(reason.rawValue, privacy: .public)")
             finish()
             notify("Suggest: no selected text. Nothing was pasted.")
         case .apply(let text):
-            Self.logger.notice("Suggest apply key=\(String(describing: key), privacy: .public)")
+            Self.logger.notice("Suggest apply \(input, privacy: .public)")
             // The paste starts now; the list confirms the pick alongside it.
             let paste = CursorPaster.startPasteAtCursor(text)
             Task { @MainActor in
@@ -296,22 +323,25 @@ final class SuggestController {
         panel.setAnchor(nil)
         panel.fitToContent()
         let ownPID = ProcessInfo.processInfo.processIdentifier
-        guard let processID = NSWorkspace.shared.frontmostApplication?.processIdentifier, processID != ownPID else {
-            reveal(generation: generation, reading: .none(reason: "no-frontmost-app"), started: started)
+        let target = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard let processID = target, processID != ownPID else {
+            reveal(generation: generation, reading: .none(reason: "no-frontmost-app"), started: started, target: nil)
             return
         }
         SuggestAnchorReader.queue.async { [weak self] in
             let reading = SuggestAnchorReader.read(processID: processID)
-            Task { @MainActor in self?.reveal(generation: generation, reading: reading, started: started) }
+            Task { @MainActor in self?.reveal(generation: generation, reading: reading, started: started, target: processID) }
         }
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(SuggestAnchorReader.budget * 1_000_000_000))
-            self?.reveal(generation: generation, reading: .none(reason: "budget"), started: started)
+            self?.reveal(generation: generation, reading: .none(reason: "budget"), started: started, target: processID)
         }
     }
 
     /// The first of the reading and the budget for this run shows the list; the other does nothing.
-    private func reveal(generation: Int, reading: SuggestAnchorReader.Reading, started: TimeInterval) {
+    /// From then on the list closes on a click outside it, an app switch, or a change of the
+    /// focused element the reading found (F7, `SuggestCore.closeReason`).
+    private func reveal(generation: Int, reading: SuggestAnchorReader.Reading, started: TimeInterval, target: pid_t?) {
         guard generation == openGeneration, session != nil, !panel.isVisible else {
             if generation == openGeneration, reading.source != "none:budget" {
                 Self.logger.notice("Suggest anchor late source=\(reading.source, privacy: .public) readMs=\(reading.milliseconds, privacy: .public)")
@@ -319,12 +349,31 @@ final class SuggestController {
             return
         }
         var anchor: CGRect?
-        if case .rect(let rect) = reading.result { anchor = rect }
-        panel.setAnchor(anchor)
+        var centre: CGRect?
+        if case .rect(let rect, let centreRect) = reading.result {
+            anchor = rect
+            centre = centreRect
+        }
+        panel.setAnchor(anchor, centre: centre)
         let side = panel.fitToContent()
         panel.orderFrontRegardless()
+        outsideWatch?.stop()
+        outsideWatch = SuggestOutsideWatch(target: target, focused: reading.focused?.element) { [weak self] event in
+            self?.outside(event)
+        }
         let waited = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
-        Self.logger.notice("Suggest anchor source=\(reading.source, privacy: .public) readMs=\(reading.milliseconds, privacy: .public) shownAfterMs=\(waited, privacy: .public) side=\(side.rawValue, privacy: .public)")
+        let geometry = anchor.map { rect in
+            let middle = centre ?? rect
+            return " rect=\(Int(rect.minX)),\(Int(rect.minY)),\(Int(rect.width))x\(Int(rect.height)) centreX=\(Int(middle.midX)) panel=\(Int(panel.frame.minX)),\(Int(panel.frame.width))"
+        } ?? ""
+        Self.logger.notice("Suggest anchor source=\(reading.source, privacy: .public) readMs=\(reading.milliseconds, privacy: .public) shownAfterMs=\(waited, privacy: .public) side=\(side.rawValue, privacy: .public)\(geometry, privacy: .public)")
+    }
+
+    /// Something outside the list happened while it shows (F7): it closes as Esc does, or not.
+    private func outside(_ event: SuggestCore.OutsideEvent) {
+        guard let session, let reason = SuggestCore.closeReason(for: event, phase: session.phase) else { return }
+        Self.logger.notice("Suggest closed reason=\(reason, privacy: .public)")
+        finish()
     }
 
     /// A first request that fails closes the list. A new set that fails shows the previous
@@ -351,6 +400,8 @@ final class SuggestController {
         pressCheck?.cancel()
         pressCheck = nil
         keyMonitor.stop(reason: "suggest-closed")
+        outsideWatch?.stop()
+        outsideWatch = nil
         panel.orderOut(nil)
         panel.alphaValue = 1
         model.items = nil
@@ -423,23 +474,31 @@ enum SuggestAnchorReader {
 
     struct Reading: Sendable {
         enum Result: Sendable {
-            case rect(CGRect)
+            /// The selection's rectangle, and the part of it the list centres on (F7): the whole
+            /// rectangle, or its last line (`SuggestCore.centreRect`).
+            case rect(CGRect, centre: CGRect)
             case none
+        }
+        /// The focused element the rectangle came from (F7): the list closes when focus leaves it.
+        struct Focused: @unchecked Sendable {
+            let element: AXUIElement
         }
         let result: Result
         /// `bounds`, `caret`, `marker-bounds`, or `none:<reason>`.
         let source: String
         let milliseconds: Int
+        var focused: Focused?
 
         static func none(reason: String) -> Reading { Reading(result: .none, source: "none:\(reason)", milliseconds: 0) }
     }
 
     static func read(processID: pid_t) -> Reading {
         let started = ProcessInfo.processInfo.systemUptime
-        func done(_ rect: CGRect?, _ source: String) -> Reading {
+        var focused: Reading.Focused?
+        func done(_ rect: CGRect?, _ source: String, centre: CGRect? = nil) -> Reading {
             let milliseconds = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
-            guard let rect else { return Reading(result: .none, source: "none:\(source)", milliseconds: milliseconds) }
-            return Reading(result: .rect(rect), source: source, milliseconds: milliseconds)
+            guard let rect else { return Reading(result: .none, source: "none:\(source)", milliseconds: milliseconds, focused: focused) }
+            return Reading(result: .rect(rect, centre: centre ?? rect), source: source, milliseconds: milliseconds, focused: focused)
         }
         guard AXIsProcessTrusted() else { return done(nil, "no-accessibility") }
         let app = AXUIElementCreateApplication(processID)
@@ -447,17 +506,36 @@ enum SuggestAnchorReader {
         guard let element = AccessibilityFocusReader.focusedElement(in: app).element else {
             return done(nil, "no-focused-element")
         }
+        focused = Reading.Focused(element: element)
         AXUIElementSetMessagingTimeout(element, messagingTimeout)
         if let range = selectedRange(of: element) {
             let end = range.location + range.length
-            if range.length > 0, let rect = bounds(of: range, in: element) { return done(rect, "bounds") }
+            if range.length > 0, let rect = bounds(of: range, in: element) {
+                let last = lastCharacter(of: range, in: element).flatMap { bounds(of: $0, in: element) }
+                return done(rect, "bounds", centre: SuggestCore.centreRect(selection: rect, lastCharacter: last))
+            }
             if let rect = bounds(of: CFRange(location: end, length: 0), in: element) { return done(rect, "caret") }
             if range.length > 0, let rect = bounds(of: CFRange(location: end - 1, length: 1), in: element) {
                 return done(rect, "caret")
             }
         }
-        if let marker = markerBounds(in: element) { return done(marker.rect, marker.reordered ? "marker-bounds-ordered" : "marker-bounds") }
+        if let marker = markerGeometry(in: element) {
+            return done(marker.rect, marker.reordered ? "marker-bounds-ordered" : "marker-bounds", centre: marker.centre)
+        }
         return done(nil, "no-text-bounds")
+    }
+
+    /// The selection's last visible character as a character range (F7): trailing spaces and line
+    /// breaks skipped when the selected text matches the range, else the range's last character.
+    private static func lastCharacter(of range: CFRange, in element: AXUIElement) -> CFRange? {
+        var value: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &value) == .success,
+            let text = value as? String, (text as NSString).length == range.length
+        {
+            guard let last = SuggestCore.lastVisibleCharacter(of: text) else { return nil }
+            return CFRange(location: range.location + last.location, length: last.length)
+        }
+        return range.length > 0 ? CFRange(location: range.location + range.length - 1, length: 1) : nil
     }
 
     private static func selectedRange(of element: AXUIElement) -> CFRange? {
@@ -477,12 +555,12 @@ enum SuggestAnchorReader {
         return rect(element, kAXBoundsForRangeParameterizedAttribute as CFString, parameter)
     }
 
-    private static func markerBounds(in element: AXUIElement) -> (rect: CGRect, reordered: Bool)? {
+    private static func markerGeometry(in element: AXUIElement) -> (rect: CGRect, centre: CGRect, reordered: Bool)? {
         var markers: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, "AXSelectedTextMarkerRange" as CFString, &markers) == .success,
             let markers
         else { return nil }
-        return SuggestCore.markerSelectionRect(markers, ElementMarkerQueries(element: element))
+        return SuggestCore.markerSelectionGeometry(markers, ElementMarkerQueries(element: element))
     }
 
     /// `SuggestCore.MarkerQueries` over Accessibility calls on one element.
@@ -503,6 +581,21 @@ enum SuggestAnchorReader {
             else { return nil }
             return value
         }
+
+        func lastCharacter(_ range: CFTypeRef) -> CFTypeRef? {
+            guard CFGetTypeID(range) == AXTextMarkerRangeGetTypeID() else { return nil }
+            let end = AXTextMarkerRangeCopyEndMarker(unsafeBitCast(range, to: AXTextMarkerRange.self))
+            var previous: CFTypeRef?
+            guard AXUIElementCopyParameterizedAttributeValue(
+                element, "AXPreviousTextMarkerForTextMarker" as CFString, end, &previous) == .success,
+                let previous
+            else { return nil }
+            var value: CFTypeRef?
+            guard AXUIElementCopyParameterizedAttributeValue(
+                element, "AXTextMarkerRangeForUnorderedTextMarkers" as CFString, [previous, end] as CFArray, &value) == .success
+            else { return nil }
+            return value
+        }
     }
 
     /// A rectangle a parameterized attribute returns, if it could hold text (`SuggestCore.usableTextRect`).
@@ -517,54 +610,162 @@ enum SuggestAnchorReader {
     }
 }
 
+/// What closes the list besides its keys and clicks (F7, `SuggestCore.closeReason`): a mouse
+/// button down in any other app, another app becoming active, and the app's focused element
+/// changing away from the one the list opened on. Read-only: a global event monitor, a workspace
+/// notification and an Accessibility observer, all removed by `stop`.
+@MainActor
+final class SuggestOutsideWatch {
+    private var mouseMonitor: Any?
+    private var activation: NSObjectProtocol?
+    private var observer: AXObserver?
+    private let focused: AXUIElement?
+    private let onEvent: (SuggestCore.OutsideEvent) -> Void
+    private var stopped = false
+
+    init(target: pid_t?, focused: AXUIElement?, onEvent: @escaping (SuggestCore.OutsideEvent) -> Void) {
+        self.focused = focused
+        self.onEvent = onEvent
+        // Only events bound for other apps reach a global monitor, so a click on the list never does.
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+            Task { @MainActor in self?.emit(.mouseDown) }
+        }
+        activation = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let isTarget = target != nil && app?.processIdentifier == target
+            Task { @MainActor in self?.emit(.appActivated(isTarget: isTarget)) }
+        }
+        if let target, focused != nil { observeFocus(of: target) }
+    }
+
+    private func observeFocus(of processID: pid_t) {
+        var created: AXObserver?
+        let callback: AXObserverCallback = { _, element, _, refcon in
+            guard let refcon else { return }
+            let watch = Unmanaged<SuggestOutsideWatch>.fromOpaque(refcon).takeUnretainedValue()
+            MainActor.assumeIsolated { watch.focusChanged(to: element) }
+        }
+        guard AXObserverCreate(processID, callback, &created) == .success, let created else { return }
+        let app = AXUIElementCreateApplication(processID)
+        guard AXObserverAddNotification(
+            created, app, kAXFocusedUIElementChangedNotification as CFString, Unmanaged.passUnretained(self).toOpaque()) == .success
+        else { return }
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(created), .defaultMode)
+        observer = created
+    }
+
+    private func focusChanged(to element: AXUIElement) {
+        emit(.focusChanged(isSame: focused.map { CFEqual($0, element) } ?? true))
+    }
+
+    /// Nothing reaches the controller after `stop`, so a late event never closes a later run.
+    private func emit(_ event: SuggestCore.OutsideEvent) {
+        guard !stopped else { return }
+        onEvent(event)
+    }
+
+    func stop() {
+        stopped = true
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+        mouseMonitor = nil
+        if let activation { NSWorkspace.shared.notificationCenter.removeObserver(activation) }
+        activation = nil
+        if let observer {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
+        }
+        observer = nil
+    }
+}
+
 @MainActor
 final class SuggestPanelModel: ObservableObject {
     /// The selected text, once captured.
     @Published var original: String?
-    /// nil while thinking.
-    @Published var items: [String]?
+    /// nil while thinking. New content under the pointer clears its hover and press (F7).
+    @Published var items: [String]? {
+        didSet { pointer.reset() }
+    }
     /// The picked line (1-based) while the list confirms it.
     @Published var picked: Int?
+    /// What the pointer hovers and holds (F7).
+    @Published var pointer = SuggestCore.Pointer()
+    /// Where each clickable part is, in the panel's top-left coordinates, as the view lays it out.
+    var frames: [SuggestCore.Target: CGRect] = [:]
+    /// A click on a row, the esc chip or "△ more", or VoiceOver's press on one.
+    var onClick: ((SuggestCore.Target) -> Void)?
 }
 
-/// Floats over the app and never takes keyboard focus, so the draft keeps its focus and
-/// its selection. Its keys come from `SuggestController`'s key monitor.
+/// Floats over the app and never takes keyboard focus (`SuggestNonActivatingPanel`), so the draft
+/// keeps its focus and its selection. Its keys come from `SuggestController`'s key monitor; its
+/// mouse events from `SuggestPointerView`, over the content (F7).
 @MainActor
-final class SuggestPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
-
+final class SuggestPanel: SuggestNonActivatingPanel {
+    private let model: SuggestPanelModel
     private let hostingView: NSHostingView<SuggestPanelView>
+    private let pointerView = SuggestPointerView()
     /// The selected text's rectangle in Accessibility coordinates, when it was read in time.
     private var anchor: CGRect?
+    /// The part of it the list centres on (F7): the whole rectangle, or its last line.
+    private var centre: CGRect?
     /// The side this run took at its first placement (F6), kept while the list fits there.
     private var runSide: SuggestCore.PanelSide?
+    /// Where the pointer was when the list showed: AppKit may report a move when a window appears
+    /// under a resting pointer, and that is not a move (F7).
+    private var pointerAtShow: CGPoint?
 
     init(model: SuggestPanelModel) {
+        self.model = model
         hostingView = NSHostingView(rootView: SuggestPanelView(model: model))
-        super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 120),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        level = .floating
-        isFloatingPanel = true
-        hidesOnDeactivate = false
-        isReleasedWhenClosed = false
-        becomesKeyOnlyIfNeeded = true
-        backgroundColor = .clear
-        isOpaque = false
-        hasShadow = true
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 320, height: 120))
         appearance = nil  // follows VoiceInk's appearance, as the AutoLearn panel does
-        contentView = hostingView
+        let container = NSView()
+        hostingView.autoresizingMask = [.width, .height]
+        pointerView.autoresizingMask = [.width, .height]
+        container.addSubview(hostingView)
+        container.addSubview(pointerView)
+        contentView = container
+        hostingView.frame = container.bounds
+        pointerView.frame = container.bounds
+        pointerView.onEvent = { [weak self] event in self?.pointer(event) }
         setAccessibilityIdentifier("voiceink-suggest-panel")
     }
 
-    func setAnchor(_ accessibilityRect: CGRect?) {
+    func setAnchor(_ accessibilityRect: CGRect?, centre: CGRect? = nil) {
         anchor = accessibilityRect
+        self.centre = centre
         runSide = nil
+    }
+
+    override func orderFrontRegardless() {
+        pointerAtShow = NSEvent.mouseLocation
+        model.pointer.reset()
+        super.orderFrontRegardless()
+    }
+
+    /// Hover, press and click (F7). A picked line freezes the list while it goes.
+    private func pointer(_ event: SuggestPointerView.Event) {
+        guard model.picked == nil else { return }
+        let wasOriginal = model.pointer.highlighted == .original
+        var pointer = model.pointer
+        var clicked: SuggestCore.Target?
+        switch event {
+        case .moved(let point, let screen):
+            if let start = pointerAtShow, start == screen, pointer.pressed == nil { return }
+            pointerAtShow = nil
+            pointer.moved(over: SuggestCore.target(at: point, in: model.frames))
+        case .exited:
+            pointer.exited()
+        case .down(let point):
+            pointer.down(on: SuggestCore.target(at: point, in: model.frames))
+        case .up(let point):
+            clicked = pointer.up(on: SuggestCore.target(at: point, in: model.frames))
+        }
+        if pointer != model.pointer { model.pointer = pointer }
+        // The whole original shows while the pointer is on it: the panel grows to fit.
+        if wasOriginal != (model.pointer.highlighted == .original) { fitToContent() }
+        if let clicked { model.onClick?(clicked) }
     }
 
     /// Sizes the panel to its content and places it at the anchor (`SuggestCore.panelOrigin`):
@@ -597,7 +798,8 @@ final class SuggestPanel: NSPanel {
         if placedAnchor != nil, runSide == nil {
             runSide = SuggestCore.runSide(size: size, anchor: placedAnchor, visible: visible)
         }
-        let placed = SuggestCore.panelOrigin(size: size, anchor: placedAnchor, visible: visible, keeping: runSide)
+        let centreX = placedAnchor == nil ? nil : (centre ?? anchor)?.midX
+        let placed = SuggestCore.panelOrigin(size: size, anchor: placedAnchor, visible: visible, keeping: runSide, centreX: centreX)
         if placedAnchor != nil { runSide = placed.side }
         setFrame(NSRect(origin: placed.origin, size: size), display: true)
         return placed.side
@@ -626,6 +828,14 @@ struct SuggestPanelView: View {
     /// A row's highlight reaches this close to the panel's sides.
     private static let rowMargin: CGFloat = 4
     private static let changeFill = Color.accentColor.opacity(0.22)
+    /// The panel's own coordinate space: top-left origin, as `SuggestPointerView` reports points.
+    static let space = "suggest-panel"
+    /// Hover and press fills (F7): VoiceInk's subtle surface for the row under the pointer, its
+    /// selection fill while a press is held on it; the pick keeps the selection look with a border.
+    private static let hoverFill = AppTheme.Surface.subtle
+    private static let pressFill = AppTheme.Selection.fill
+
+    @State private var originIsCut = false
 
     var body: some View {
         SuggestWidthLayout(minWidth: Self.minWidth, maxWidth: Self.maxWidth) {
@@ -633,6 +843,13 @@ struct SuggestPanelView: View {
         }
         .modifier(AutoLearnSuggestionSurface())
         .fixedSize()
+        .coordinateSpace(name: Self.space)
+        .onPreferenceChange(SuggestTargetFrames.self) { model.frames = $0 }
+    }
+
+    private func fill(for target: SuggestCore.Target) -> Color? {
+        guard model.pointer.highlighted == target else { return nil }
+        return model.pointer.pressed == target ? Self.pressFill : Self.hoverFill
     }
 
     private var content: some View {
@@ -666,25 +883,65 @@ struct SuggestPanelView: View {
     }
 
     private var topLine: some View {
-        HStack(alignment: .center, spacing: 12) {
+        // Cut to one line; the whole of a cut original shows while the pointer is on it (F7).
+        let whole = originIsCut && model.pointer.highlighted == .original
+        return HStack(alignment: whole ? .top : .center, spacing: 12) {
             if let original = model.original {
-                HStack(spacing: 5) {
-                    Text(verbatim: original.replacingOccurrences(of: "\n", with: " "))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.primary.opacity(0.85))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Text(verbatim: "→")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .fixedSize()
+                let shown = original.replacingOccurrences(of: "\n", with: " ")
+                HStack(alignment: .lastTextBaseline, spacing: 5) {
+                    if whole {
+                        // The arrow follows the text's last line, not the right edge.
+                        (Text(verbatim: shown)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary.opacity(0.85))
+                            + Text(verbatim: "  →")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary))
+                            .lineLimit(8)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text(verbatim: shown)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary.opacity(0.85))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .background {
+                                GeometryReader { shownBox in
+                                    Text(verbatim: shown)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .fixedSize()
+                                        .hidden()
+                                        .background {
+                                            GeometryReader { fullBox in
+                                                Color.clear.preference(
+                                                    key: SuggestOriginCut.self,
+                                                    value: fullBox.size.width > shownBox.size.width + 0.5)
+                                            }
+                                        }
+                                }
+                            }
+                        Text(verbatim: "→")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                    }
+                }
+                .reportFrame(.original)
+                .onPreferenceChange(SuggestOriginCut.self) { cut in
+                    if !(model.pointer.highlighted == .original && originIsCut) { originIsCut = cut }
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(verbatim: original))
                 .accessibilityIdentifier("suggest-original")
             }
             Spacer(minLength: 0)
-            SuggestKeyChip(text: "esc")
+            SuggestKeyChip(text: "esc", fill: fill(for: .close))
+                .reportFrame(.close)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(verbatim: "Close"))
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { model.onClick?(.close) }
+                .accessibilityIdentifier("suggest-close")
         }
     }
 
@@ -715,14 +972,17 @@ struct SuggestPanelView: View {
             if isPicked {
                 shape.fill(AppTheme.Selection.fill)
                     .overlay(shape.strokeBorder(AppTheme.Selection.border, lineWidth: 1))
-            } else if line == 1 {
-                shape.fill(AppTheme.Surface.subtle)
+            } else if let fill = fill(for: .row(line)) {
+                shape.fill(fill)
             }
         }
         .padding(.horizontal, Self.rowMargin)
+        // The whole width of the panel is the row's to click, edge to edge with its neighbours.
+        .reportFrame(.row(line))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: "\(line) \(text)"))
-        .accessibilityAddTraits(isPicked ? .isSelected : [])
+        .accessibilityAddTraits(isPicked ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { model.onClick?(.row(line)) }
         .accessibilityIdentifier("suggest-item-\(line)")
     }
 
@@ -738,19 +998,58 @@ struct SuggestPanelView: View {
     }
 
     private func footer(count: Int) -> some View {
-        Text(verbatim: "Fn + \(count == 1 ? "1" : "1–\(count)") paste · △ more")
-            .font(.system(size: 11))
-            .foregroundStyle(.tertiary)
-            .padding(.horizontal, Self.edge)
-            .padding(.top, 5)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(Color.primary.opacity(0.07))
-                    .frame(height: 1)
+        HStack(spacing: 0) {
+            Text(verbatim: "Fn + \(count == 1 ? "1" : "1–\(count)") paste · ")
+                .accessibilityIdentifier("suggest-footer")
+            // "△ more" does what the △ key does (F7): a new set, or a fresh run for a new selection.
+            Text(verbatim: "△ more")
+                .padding(.horizontal, 3)
+                .padding(.vertical, 1)
+                .background {
+                    if let fill = fill(for: .more) { RoundedRectangle(cornerRadius: 4).fill(fill) }
+                }
+                .padding(.horizontal, -3)
+                .reportFrame(.more)
+                .accessibilityLabel(Text(verbatim: "More suggestions"))
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { model.onClick?(.more) }
+                .accessibilityIdentifier("suggest-more")
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(.tertiary)
+        .padding(.horizontal, Self.edge)
+        .padding(.top, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.07))
+                .frame(height: 1)
+        }
+        .padding(.top, 4)
+    }
+}
+
+/// The frames of the list's clickable parts, in `SuggestPanelView.space` (F7).
+private struct SuggestTargetFrames: PreferenceKey {
+    static let defaultValue: [SuggestCore.Target: CGRect] = [:]
+    static func reduce(value: inout [SuggestCore.Target: CGRect], nextValue: () -> [SuggestCore.Target: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+/// Whether the top line cuts the original (F7).
+private struct SuggestOriginCut: PreferenceKey {
+    static let defaultValue = false
+    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
+}
+
+private extension View {
+    func reportFrame(_ target: SuggestCore.Target) -> some View {
+        background {
+            GeometryReader { box in
+                Color.clear.preference(key: SuggestTargetFrames.self, value: [target: box.frame(in: .named(SuggestPanelView.space))])
             }
-            .padding(.top, 4)
-            .accessibilityIdentifier("suggest-footer")
+        }
     }
 }
 
@@ -794,14 +1093,18 @@ private extension View {
 private struct SuggestKeyChip: View {
     let text: String
     var badge = false
+    /// Over the chip's own fill while the pointer is on a clickable chip (F7).
+    var fill: Color?
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: badge ? 5 : 4)
         Text(verbatim: text)
             .font(.system(size: badge ? 11 : 10.5, weight: .semibold, design: .rounded))
             .monospacedDigit()
             .foregroundStyle(AppTheme.Text.secondary)
             .padding(.horizontal, badge ? 0 : 5)
             .frame(width: badge ? 18 : nil, height: badge ? 18 : 16)
-            .background(AppTheme.Surface.controlActive, in: RoundedRectangle(cornerRadius: badge ? 5 : 4))
+            .background(AppTheme.Surface.controlActive, in: shape)
+            .overlay { if let fill { shape.fill(fill) } }
     }
 }
