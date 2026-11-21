@@ -94,7 +94,9 @@ final class SuggestF8Tests: XCTestCase {
         XCTAssertTrue(prompt.contains(#"{"meaning": "...", "replacements": ["...", "..."]}"#), prompt)
         XCTAssertTrue(prompt.contains("even when the SELECTION is a correctly spelled word"), prompt)
         XCTAssertTrue(prompt.contains("even when the SELECTION looks right"), prompt)
-        XCTAssertTrue(prompt.contains("Never another form of the SELECTION's own word"), prompt)
+        // F10 replaced F8's "Never another form of the SELECTION's own word …" with a bound: at most one
+        // other form, and none when the SELECTION's own form fits (pinned in SuggestF10Tests).
+        XCTAssertTrue(prompt.contains("Offer at most one other form of the SELECTION's own word"), prompt)
         XCTAssertTrue(prompt.contains("letters added, dropped, doubled or swapped"), prompt)
         // The evaluation's words are not the prompt's examples.
         for word in ["быстро", "review", "утром", "тесты", "настроек", "кот", "компакшн", "деплой", "tommorow", "Cabana"] {
