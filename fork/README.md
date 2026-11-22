@@ -17,7 +17,8 @@ rebuild to update. Upstream's README, license (GPL-3.0) and build instructions a
 | **Screen text only where a mode asks for it** | A mode's *Screen* context switch now decides whether a take reads the front window at all. Stock VoiceInk reads it on every take once Screen Recording is granted, and names from it reach every mode's vocabulary even with the switch off. Turning the switch on asks for Screen Recording. The text is read in the background while you speak, so a take does not start later. | Modes → a mode → Context → *Screen*. |
 | **Screen text for Suggest** | Suggest also sends the front window's recognized text, labelled as possibly unrelated, inside its usual context limit. Reading it starts with the press, beside the selection; the request waits for it at most 0.8 s after the press, then goes without it. | Settings → Suggest → *Use Screen Text* (on by default). |
 | **Claude effort setting** | For a Claude model that accepts an effort level (Claude Haiku 5.5 among them), every mode's AI enhancement (cleanup, Rewrite) and Suggest can send `effort: low`, so the model can skip thinking. Stock VoiceInk sends no effort, and Claude Haiku 5.5 then thinks at `medium` on every request. Both default to the stock request: in a test, `low` was about twice as fast at the median, but cleanup added words that were not said more often, and Suggest listed other forms of a correct word more often. Other providers, other models and VoiceInk's other AI features are unchanged. | Settings → Suggest → *Claude Effort: Suggest* and *Claude Effort: Modes*: Model default (default), Low, Medium, High. |
-| **Fork settings in the backup** | Settings → Backup → Export also saves the Suggest shortcut, the hold threshold, the web accessibility switch and list, the Suggest footer key names, the Suggest screen text switch and both Claude effort settings; Import restores them. Upstream backups still import. | Settings → Backup. |
+| **Output language follows the keyboard layout** | Say which language you dictate in. When a take ends with a keyboard layout of another language active, in an app on the list, every mode with AI enhancement (cleanup, Rewrite) writes the result in the layout's language: it cleans as its prompt says, then translates, keeping technical terms in their standard spelling and the prompt's own prefix. The prompts are not changed: one "Output language" section is added to the request, after the vocabulary and context, only for such a take. The layout at the release counts. While you speak, the recorder shows the target language (e.g. `EN`) beside the mode icon, or `?` for a layout with no language. Other apps, the layout of your own language, modes without AI and Suggest keep the spoken language. Each take logs one line, `Output language take decision=…`. | Settings → *Output Language* → *I Dictate In* (Off by default), and *Follow the Layout In* (default: Slack and Dia). |
+| **Fork settings in the backup** | Settings → Backup → Export also saves the Suggest shortcut, the hold threshold, the web accessibility switch and list, the Suggest footer key names, the Suggest screen text switch, both Claude effort settings and the output language settings; Import restores them. Upstream backups still import. | Settings → Backup. |
 
 ### Permissions and keys
 
@@ -88,7 +89,9 @@ Fork-owned files: `fork/`, `VoiceInk/Features/Suggest/`, `VoiceInk/Features/Reco
 `VoiceInk/Infrastructure/SystemIntegration/Accessibility/WebAccessibilityKeepOn.swift`,
 `VoiceInk/Features/Enhancement/Workflows/EditingModelEffort.swift`,
 `VoiceInk/Infrastructure/Providers/Enhancement/Chat/AnthropicEffortClient.swift`,
-`VoiceInk/Features/Recording/Context/RecordingScreenContext.swift`, and the test
+`VoiceInk/Features/Recording/Context/RecordingScreenContext.swift`,
+`VoiceInk/Features/Enhancement/Workflows/OutputLanguage.swift`, `VoiceInk/Features/Enhancement/Workflows/OutputLanguageMonitor.swift`,
+`VoiceInk/Features/Settings/Views/OutputLanguageSettingsSection.swift`, `VoiceInk/Features/Settings/Views/AppListEditor.swift`, and the test
 packages `Tests/Suggest`, `Tests/RewriteDeliveryGate` and `Tests/EditingRequest` (`swift test` in each).
 
 Upstream files it touches: `README.md` (this section's link), `VoiceInk/Info.plist`,
@@ -105,4 +108,4 @@ Upstream files it touches: `README.md` (this section's link), `VoiceInk/Info.pli
 `VoiceInk/Infrastructure/Providers/Enhancement/Chat/AIChatCompletionService.swift`,
 `VoiceInk/Features/Recording/Context/RecordingContextSnapshot.swift`,
 `VoiceInk/Features/Recording/Workflows/VoiceInkEngine.swift`,
-`VoiceInk/Features/Modes/Views/ModeConfigFormView.swift`.
+`VoiceInk/Features/Modes/Views/ModeConfigFormView.swift`, `VoiceInk/Features/Recording/Components/RecorderComponents.swift`.

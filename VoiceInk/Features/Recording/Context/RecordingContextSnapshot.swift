@@ -7,6 +7,8 @@ struct RecordingContextSnapshot {
     var selectedText: String?
     var clipboardText: String?
     var screenText: String?
+    /// Fork F12: decided at the release; `.off` until then.
+    var outputLanguage: OutputLanguage.Decision = .off
 }
 
 @MainActor
@@ -20,6 +22,10 @@ final class RecordingContextSnapshotStore {
 
     func updateClipboardText(_ text: String?) {
         snapshot.clipboardText = Self.normalized(text)
+    }
+
+    func updateOutputLanguage(_ decision: OutputLanguage.Decision) {
+        snapshot.outputLanguage = decision
     }
 
     func updateScreenText(_ text: String?) {

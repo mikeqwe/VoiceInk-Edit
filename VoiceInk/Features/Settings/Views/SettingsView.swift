@@ -154,6 +154,8 @@ struct SettingsView: View {
 
             SuggestSettingsSection()  // Fork
 
+            OutputLanguageSettingsSection()  // Fork F12
+
             Section("Pasting") {
                 Picker(selection: $finishAndSendKey) {
                     ForEach(FinishAndSendKey.allCases, id: \.self) { key in

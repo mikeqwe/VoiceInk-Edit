@@ -164,7 +164,10 @@ class AIEnhancementService: ObservableObject {
                 ""
             }
 
-        return [prompt.finalPromptText, customVocabularySection, contextSection]
+        // Fork F12: last, so it applies to everything above it.
+        let outputLanguageSection = OutputLanguage.section(for: contextSnapshot?.outputLanguage ?? .off) ?? ""
+
+        return [prompt.finalPromptText, customVocabularySection, contextSection, outputLanguageSection]
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
     }

@@ -192,6 +192,9 @@ class VoiceInkEngine: NSObject, ObservableObject {
             let audioURL = recordedFile
             let contextStore = activeRecordingContextStore
             let contextCaptureTasks = activeRecordingContextTasks
+            // Fork F12: the output language follows the layout active at the release.
+            contextStore?.updateOutputLanguage(
+                OutputLanguageMonitor.shared.decisionForTakeEndingNow(mode: ModeManager.shared.currentEffectiveConfiguration))
             let session = currentSession
             let transcriptionConfiguration = currentSessionTranscriptionConfiguration
                 ?? ModeRuntimeResolver.transcriptionConfiguration(transcriptionModelManager: transcriptionModelManager)

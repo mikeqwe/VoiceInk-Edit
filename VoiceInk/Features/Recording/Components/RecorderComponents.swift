@@ -270,6 +270,10 @@ struct RecorderModeButton: View {
             isPopoverPresented.toggle()
         }
         .frame(width: buttonSize)
+        .overlay(alignment: .topTrailing) {
+            OutputLanguageBadge().offset(x: 6, y: -5)  // Fork F12
+        }
+        .onAppear { OutputLanguageMonitor.shared.refresh() }
         .padding(padding)
         .onHover {
             isHoveringButton = $0

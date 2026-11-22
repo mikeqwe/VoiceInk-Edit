@@ -247,6 +247,16 @@ enum BackupImporter {
         if let apps = general.webAccessibilityKeepOnApps {
             WebAccessibilityKeepOn.setBundleIdentifiers(apps)
         }
+        if let language = general.outputDictationLanguage {
+            if let code = OutputLanguage.primaryLanguage(language) {
+                UserDefaults.standard.set(code, forKey: OutputLanguage.dictationLanguageDefaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: OutputLanguage.dictationLanguageDefaultsKey)
+            }
+        }
+        if let apps = general.outputLanguageApps {
+            OutputLanguage.setBundleIdentifiers(apps)
+        }
         if let usesScreenText = general.suggestUsesScreenText {
             UserDefaults.standard.set(usesScreenText, forKey: SuggestCore.screenTextDefaultsKey)
         }

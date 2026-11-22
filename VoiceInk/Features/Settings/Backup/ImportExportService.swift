@@ -199,7 +199,9 @@ class ImportExportService {
             suggestMoreKeyLabel: UserDefaults.standard.string(forKey: SuggestCore.FooterHints.moreKeyLabelDefaultsKey),
             suggestUsesScreenText: SuggestCore.usesScreenText(),
             enhancementModelEffort: EditingModelEffort.current(EditingModelEffort.enhancement).effort.rawValue,
-            suggestModelEffort: EditingModelEffort.current(EditingModelEffort.suggest).effort.rawValue
+            suggestModelEffort: EditingModelEffort.current(EditingModelEffort.suggest).effort.rawValue,
+            outputDictationLanguage: OutputLanguage.dictationLanguage() ?? "",
+            outputLanguageApps: OutputLanguage.bundleIdentifiers().apps
         )
 
         let exportedSettings = BackupFile(

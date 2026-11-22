@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Fork: the Settings section for Suggest Replacement and for the apps that keep web
 /// accessibility on (`WebAccessibilityKeepOn`).
@@ -50,32 +49,7 @@ struct SuggestSettingsSection: View {
             }
 
             if keepWebAccessibilityOn {
-                ForEach(keepOnApps, id: \.self) { bundleId in
-                    HStack(spacing: 8) {
-                        TriggerAppIcon(bundleId: bundleId, size: 18)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(Self.appName(for: bundleId) ?? bundleId)
-                            Text(bundleId)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button {
-                            save(keepOnApps.filter { $0 != bundleId })
-                        } label: {
-                            Image(systemName: "minus.circle")
-                        }
-                        .buttonStyle(.plain)
-                        .help("Remove")
-                        .accessibilityLabel(Text("Remove \(Self.appName(for: bundleId) ?? bundleId)"))
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    Button("Add App…") { chooseApp() }
-                    Button("Restore Defaults") { save(WebAccessibilityKeepOn.defaultBundleIdentifiers) }
-                        .disabled(keepOnApps == WebAccessibilityKeepOn.defaultBundleIdentifiers)
-                }
+                AppListEditor(apps: keepOnApps, defaultApps: WebAccessibilityKeepOn.defaultBundleIdentifiers, save: save)
             }
         } header: {
             Text("Suggest")
@@ -100,22 +74,5 @@ struct SuggestSettingsSection: View {
         WebAccessibilityKeepOn.setBundleIdentifiers(list)
         keepOnApps = WebAccessibilityKeepOn.bundleIdentifiers()
         WebAccessibilityKeeper.shared.applyToRunningApps()
-    }
-
-    private func chooseApp() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.application]
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        panel.prompt = String(localized: "Add")
-        guard panel.runModal() == .OK else { return }
-        let added = panel.urls.compactMap { Bundle(url: $0)?.bundleIdentifier }
-        save(keepOnApps + added)
-    }
-
-    private static func appName(for bundleId: String) -> String? {
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else { return nil }
-        return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
     }
 }
