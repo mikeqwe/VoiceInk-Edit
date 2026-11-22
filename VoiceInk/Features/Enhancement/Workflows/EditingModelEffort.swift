@@ -1,11 +1,14 @@
 import Foundation
 
-/// Fork F11: the effort sent with the Anthropic requests of cleanup, Rewrite and Suggest.
+/// Fork F11: the effort sent with the Anthropic requests of every mode's AI enhancement (cleanup,
+/// Rewrite) and of Suggest, one setting per path.
 ///
 /// Without `output_config.effort`, Claude Haiku 5.5 thinks at its default effort, `medium`, on every
-/// request. `low` lets it skip thinking on simple requests, which is what a cleanup or a list of
-/// replacements is (https://platform.claude.com/docs/en/build-with-claude/effort). Other requests
-/// (Assistant, Auto Learn) and other providers are not affected.
+/// request (https://platform.claude.com/docs/en/build-with-claude/effort). On F11's evaluation, `low`
+/// made cleanup and Suggest about twice as fast at the median but measurably worse: cleanup invented
+/// content more often, and Suggest listed other forms of a correct word. So both paths keep the stock
+/// request by default, and `low` is a choice. Other requests (Assistant, Auto Learn) and other
+/// providers are not affected.
 enum EditingModelEffort: String, CaseIterable, Sendable {
     /// Send no effort: the model's own default, exactly the request stock VoiceInk sends.
     case modelDefault = "default"
@@ -13,22 +16,28 @@ enum EditingModelEffort: String, CaseIterable, Sendable {
     case medium
     case high
 
-    static let defaultsKey = "editingModelEffort"
-    static let standard: EditingModelEffort = .low
+    /// One path's setting: where it is stored and what applies when nothing is.
+    struct Setting: Sendable {
+        let defaultsKey: String
+        let standard: EditingModelEffort
+    }
 
-    /// The setting as stored. Unset means `standard`; a value this build does not know is
-    /// returned as `invalid`, so the caller can log it, and `standard` applies.
-    static func resolve(_ stored: String?) -> (effort: EditingModelEffort, invalid: String?) {
+    static let enhancement = Setting(defaultsKey: "enhancementModelEffort", standard: .modelDefault)
+    static let suggest = Setting(defaultsKey: "suggestModelEffort", standard: .modelDefault)
+
+    /// The setting as stored. Unset means the path's standard; a value this build does not know is
+    /// returned as `invalid`, so the caller can log it, and the standard applies.
+    static func resolve(_ stored: String?, standard: EditingModelEffort) -> (effort: EditingModelEffort, invalid: String?) {
         guard let stored else { return (standard, nil) }
         guard let effort = EditingModelEffort(rawValue: stored) else { return (standard, stored) }
         return (effort, nil)
     }
 
     /// The stored setting; a stored value that is not a string is reported as invalid too.
-    static func current(in defaults: UserDefaults = .standard) -> (effort: EditingModelEffort, invalid: String?) {
-        let stored = defaults.object(forKey: defaultsKey)
-        guard stored == nil || stored is String else { return (standard, String(describing: stored!)) }
-        return resolve(stored as? String)
+    static func current(_ setting: Setting, in defaults: UserDefaults = .standard) -> (effort: EditingModelEffort, invalid: String?) {
+        let stored = defaults.object(forKey: setting.defaultsKey)
+        guard stored == nil || stored is String else { return (setting.standard, String(describing: stored!)) }
+        return resolve(stored as? String, standard: setting.standard)
     }
 
     /// One log field for a request: what was sent, and why nothing was.

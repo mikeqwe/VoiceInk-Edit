@@ -111,7 +111,8 @@ struct GeneralBackup: Codable {
     let suggestPickKeyLabel: String?
     let suggestMoreKeyLabel: String?
     let suggestUsesScreenText: Bool?
-    let editingModelEffort: String?
+    let enhancementModelEffort: String?
+    let suggestModelEffort: String?
 }
 
 struct WordBackup: Codable {

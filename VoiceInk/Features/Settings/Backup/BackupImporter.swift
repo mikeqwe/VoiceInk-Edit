@@ -250,11 +250,15 @@ enum BackupImporter {
         if let usesScreenText = general.suggestUsesScreenText {
             UserDefaults.standard.set(usesScreenText, forKey: SuggestCore.screenTextDefaultsKey)
         }
-        if let effort = general.editingModelEffort {
+        for (effort, setting) in [
+            (general.enhancementModelEffort, EditingModelEffort.enhancement),
+            (general.suggestModelEffort, EditingModelEffort.suggest),
+        ] {
+            guard let effort else { continue }
             if EditingModelEffort(rawValue: effort) != nil {
-                UserDefaults.standard.set(effort, forKey: EditingModelEffort.defaultsKey)
+                UserDefaults.standard.set(effort, forKey: setting.defaultsKey)
             } else {
-                print("Skipped editingModelEffort \(effort): not a known value.")
+                print("Skipped \(setting.defaultsKey) \(effort): not a known value.")
             }
         }
         for (label, key) in [

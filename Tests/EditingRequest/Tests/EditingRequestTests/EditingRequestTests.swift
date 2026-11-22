@@ -9,13 +9,34 @@ final class EditingRequestTests: XCTestCase {
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
-    func testTheSettingIsLowUnlessStoredAndAnUnknownValueIsReported() {
-        XCTAssertEqual(EditingModelEffort.resolve(nil).effort, .low)
-        XCTAssertNil(EditingModelEffort.resolve(nil).invalid)
-        XCTAssertEqual(EditingModelEffort.resolve("default").effort, .modelDefault)
-        XCTAssertEqual(EditingModelEffort.resolve("medium").effort, .medium)
-        let unknown = EditingModelEffort.resolve("minimal")
-        XCTAssertEqual(unknown.effort, .low)
+    func testEachPathHasItsOwnSettingAndStandard() {
+        // F11's evaluation: low made cleanup and Suggest measurably worse, so both keep the stock request.
+        XCTAssertEqual(EditingModelEffort.enhancement.standard, .modelDefault)
+        XCTAssertEqual(EditingModelEffort.suggest.standard, .modelDefault)
+        XCTAssertNotEqual(EditingModelEffort.enhancement.defaultsKey, EditingModelEffort.suggest.defaultsKey)
+
+        let name = "EditingRequestTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertEqual(EditingModelEffort.current(EditingModelEffort.enhancement, in: defaults).effort, .modelDefault)
+        XCTAssertEqual(EditingModelEffort.current(EditingModelEffort.suggest, in: defaults).effort, .modelDefault)
+        defaults.set("low", forKey: EditingModelEffort.enhancement.defaultsKey)
+        XCTAssertEqual(EditingModelEffort.current(EditingModelEffort.enhancement, in: defaults).effort, .low)
+        XCTAssertEqual(EditingModelEffort.current(EditingModelEffort.suggest, in: defaults).effort, .modelDefault,
+                       "each path has its own key")
+        defaults.set("high", forKey: EditingModelEffort.suggest.defaultsKey)
+        XCTAssertEqual(EditingModelEffort.current(EditingModelEffort.suggest, in: defaults).effort, .high)
+        defaults.set(3, forKey: EditingModelEffort.suggest.defaultsKey)
+        let wrongType = EditingModelEffort.current(EditingModelEffort.suggest, in: defaults)
+        XCTAssertEqual(wrongType.effort, .modelDefault)
+        XCTAssertEqual(wrongType.invalid, "3", "a stored value of the wrong type is reported")
+    }
+
+    func testAnUnknownValueIsReportedAndTheStandardApplies() {
+        XCTAssertEqual(EditingModelEffort.resolve("medium", standard: .low).effort, .medium)
+        XCTAssertNil(EditingModelEffort.resolve(nil, standard: .low).invalid)
+        let unknown = EditingModelEffort.resolve("minimal", standard: .modelDefault)
+        XCTAssertEqual(unknown.effort, .modelDefault)
         XCTAssertEqual(unknown.invalid, "minimal", "an unknown stored value is reported, not silently replaced")
     }
 

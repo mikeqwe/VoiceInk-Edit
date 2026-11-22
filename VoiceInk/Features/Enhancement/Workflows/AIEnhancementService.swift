@@ -226,7 +226,7 @@ class AIEnhancementService: ObservableObject {
         }
 
         do {
-            let effort = EditingModelEffort.current()
+            let effort = EditingModelEffort.current(EditingModelEffort.enhancement)
             if provider == .anthropic {
                 logger.notice(
                     "Enhancement request model=\(modelName, privacy: .public) effort=\(effort.effort.logValue(model: modelName, invalid: effort.invalid), privacy: .public) screenContextChars=\(configuration.useScreenCaptureContext ? (contextSnapshot?.screenText?.count ?? 0) : -1, privacy: .public)"

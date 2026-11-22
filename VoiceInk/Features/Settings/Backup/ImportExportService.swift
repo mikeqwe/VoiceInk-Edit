@@ -198,7 +198,8 @@ class ImportExportService {
             suggestPickKeyLabel: UserDefaults.standard.string(forKey: SuggestCore.FooterHints.pickKeyLabelDefaultsKey),
             suggestMoreKeyLabel: UserDefaults.standard.string(forKey: SuggestCore.FooterHints.moreKeyLabelDefaultsKey),
             suggestUsesScreenText: SuggestCore.usesScreenText(),
-            editingModelEffort: EditingModelEffort.current().effort.rawValue
+            enhancementModelEffort: EditingModelEffort.current(EditingModelEffort.enhancement).effort.rawValue,
+            suggestModelEffort: EditingModelEffort.current(EditingModelEffort.suggest).effort.rawValue
         )
 
         let exportedSettings = BackupFile(

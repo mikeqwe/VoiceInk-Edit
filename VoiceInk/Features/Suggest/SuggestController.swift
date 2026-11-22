@@ -279,7 +279,7 @@ final class SuggestController {
         let aroundChars = context.around.map { $0.before.utf16.count + $0.after.utf16.count } ?? 0
         let otherChars = context.other.reduce(0) { $0 + $1.utf16.count }
         let screenChars = context.screen?.utf16.count ?? 0
-        let effort = EditingModelEffort.current()
+        let effort = EditingModelEffort.current(EditingModelEffort.suggest)
         Self.logger.notice("Suggest request provider=\(request.provider.rawValue, privacy: .public) model=\(request.model ?? "default", privacy: .public) selectionChars=\(request.selection.count, privacy: .public) context=\(context.around != nil, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) otherChars=\(otherChars, privacy: .public) screenChars=\(screenChars, privacy: .public) effort=\(request.provider == .anthropic ? effort.effort.logValue(model: request.model ?? "default", invalid: effort.invalid) : "n/a", privacy: .public) rejected=\(rejected.count, privacy: .public)")
         let started = Date()
         do {

@@ -7,7 +7,8 @@ import UniformTypeIdentifiers
 struct SuggestSettingsSection: View {
     @AppStorage(WebAccessibilityKeepOn.defaultsKey) private var keepWebAccessibilityOn = true
     @AppStorage(SuggestCore.screenTextDefaultsKey) private var usesScreenText = true
-    @AppStorage(EditingModelEffort.defaultsKey) private var effort = EditingModelEffort.standard.rawValue
+    @AppStorage(EditingModelEffort.enhancement.defaultsKey) private var enhancementEffort = EditingModelEffort.enhancement.standard.rawValue
+    @AppStorage(EditingModelEffort.suggest.defaultsKey) private var suggestEffort = EditingModelEffort.suggest.standard.rawValue
     @State private var keepOnApps = WebAccessibilityKeepOn.bundleIdentifiers()
 
     var body: some View {
@@ -33,17 +34,10 @@ struct SuggestSettingsSection: View {
                 Task { _ = await ScreenCaptureService.requestScreenCapturePermissionRegistration() }
             }
 
-            Picker(selection: $effort) {
-                Text("Low (faster)").tag(EditingModelEffort.low.rawValue)
-                Text("Medium").tag(EditingModelEffort.medium.rawValue)
-                Text("High").tag(EditingModelEffort.high.rawValue)
-                Text("Model default").tag(EditingModelEffort.modelDefault.rawValue)
-            } label: {
-                HStack(spacing: 4) {
-                    Text("Claude Effort")
-                    InfoTip("How much a Claude model thinks before it answers, for every mode's AI enhancement (cleanup, Rewrite) and for Suggest. Low is the fastest. Model default sends no effort (Claude Haiku 5.5 then uses medium). Other providers and models without effort are unaffected.")
-                }
-            }
+            effortPicker("Claude Effort: Suggest", selection: $suggestEffort,
+                         tip: "How much a Claude model thinks before it lists replacements. Model default (the default) sends no effort; Claude Haiku 5.5 then uses medium. Low is about twice as fast, but in a test it listed other forms of a correct word more often.")
+            effortPicker("Claude Effort: Modes", selection: $enhancementEffort,
+                         tip: "The same for every mode's AI enhancement (cleanup, Rewrite). Model default (the default) sends no effort; Claude Haiku 5.5 then uses medium. Low is about twice as fast, but in a test it added words that were not said more often. Other providers and models without effort are unaffected.")
 
             Toggle(isOn: $keepWebAccessibilityOn) {
                 HStack(spacing: 4) {
@@ -85,6 +79,20 @@ struct SuggestSettingsSection: View {
             }
         } header: {
             Text("Suggest")
+        }
+    }
+
+    private func effortPicker(_ title: String, selection: Binding<String>, tip: String) -> some View {
+        Picker(selection: selection) {
+            Text("Low (faster)").tag(EditingModelEffort.low.rawValue)
+            Text("Medium").tag(EditingModelEffort.medium.rawValue)
+            Text("High").tag(EditingModelEffort.high.rawValue)
+            Text("Model default").tag(EditingModelEffort.modelDefault.rawValue)
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                InfoTip(tip)
+            }
         }
     }
 
