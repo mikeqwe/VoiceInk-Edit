@@ -231,22 +231,36 @@ class AIEnhancementService: ObservableObject {
         }
 
         do {
-            let effort = EditingModelEffort.current(EditingModelEffort.enhancement)
+            let storedEffort = EditingModelEffort.current(EditingModelEffort.enhancement)
+            let outputLanguage = contextSnapshot?.outputLanguage ?? .off
+            let effort = (
+                effort: OutputLanguage.requestEffort(setting: storedEffort.effort, decision: outputLanguage),
+                invalid: storedEffort.invalid
+            )
             if provider == .anthropic {
                 logger.notice(
                     "Enhancement request model=\(modelName, privacy: .public) effort=\(effort.effort.logValue(model: modelName, invalid: effort.invalid), privacy: .public) screenContextChars=\(configuration.useScreenCaptureContext ? (contextSnapshot?.screenText?.count ?? 0) : -1, privacy: .public)"
                 )
             }
-            let completion = try await aiService.performChatCompletion(
-                provider: provider,
-                modelName: modelName,
-                messages: [.user(formattedText)],
-                systemPrompt: systemMessage,
-                localUserPrompt: formattedText,
-                timeout: requestTimeout,
-                retryOnTimeout: EnhancementRequestSettings.retryOnTimeout,
-                anthropicEffort: effort.effort
-            )
+            // Fork F15: a result holding the model's own notes is requested once more, then fails visibly.
+            let outcome = try await EnhancementResultCheck.request(
+                decision: outputLanguage,
+                dictationLanguage: OutputLanguage.dictationLanguage(),
+                text: { (result: AIChatCompletionResult) in result.text },
+                log: { line in logger.notice("\(line, privacy: .public)") }
+            ) {
+                try await aiService.performChatCompletion(
+                    provider: provider,
+                    modelName: modelName,
+                    messages: [.user(formattedText)],
+                    systemPrompt: systemMessage,
+                    localUserPrompt: formattedText,
+                    timeout: requestTimeout,
+                    retryOnTimeout: EnhancementRequestSettings.retryOnTimeout,
+                    anthropicEffort: effort.effort
+                )
+            }
+            guard case .accepted(let completion) = outcome else { throw EnhancementError.resultHeldModelNotes }
             if let openRouterCompletion = completion.openRouterCompletion {
                 let routedProvider = openRouterCompletion.provider ?? "unknown"
                 let routingAttempt = openRouterCompletion.metadata?.attempt ?? 0
@@ -452,6 +466,8 @@ enum EnhancementError: Error {
     case serverError
     case rateLimitExceeded
     case timeout
+    /// Fork F15: the result held the model's own notes twice (`EnhancementResultCheck`).
+    case resultHeldModelNotes
     case customError(String)
 }
 
@@ -475,6 +491,8 @@ extension EnhancementError: LocalizedError {
         case .timeout:
             return String(
                 localized: "Enhancement request timed out. Check your connection or increase the timeout duration.")
+        case .resultHeldModelNotes:
+            return String(localized: "The AI result held the model's own notes, so the transcript was kept unchanged.")
         case .customError(let message):
             return message
         }

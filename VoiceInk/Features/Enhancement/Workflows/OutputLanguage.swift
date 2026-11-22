@@ -92,6 +92,15 @@ enum OutputLanguage {
             """
     }
 
+    /// Fork F15: the effort a take's request is sent with. A translated take thinks at `high` unless the
+    /// user chose an effort: without thinking, Claude Haiku 5.5 wrote its clean-then-translate steps into
+    /// the pasted text (F15-REPORT.md), and Anthropic recommends `high` "when instruction following matters
+    /// most" (Prompting Claude Haiku 5.5). Every other take keeps the setting as it is.
+    static func requestEffort(setting: EditingModelEffort, decision: Decision) -> EditingModelEffort {
+        guard case .translate = decision, setting == .modelDefault else { return setting }
+        return .high
+    }
+
     // MARK: - Settings
 
     /// The dictation language, or nil when the feature is off.
