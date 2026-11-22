@@ -25,6 +25,7 @@ struct PromptEditorView: View {
     @State private var title: String
     @State private var promptText: String
     @State private var useSystemInstructions: Bool
+    @State private var addsVoiceMark: Bool
     @State private var showDeleteConfirmation = false
 
     private var saveButtonTitle: LocalizedStringKey {
@@ -62,10 +63,12 @@ struct PromptEditorView: View {
             _title = State(initialValue: "")
             _promptText = State(initialValue: "")
             _useSystemInstructions = State(initialValue: true)
+            _addsVoiceMark = State(initialValue: false)
         case .edit(let prompt):
             _title = State(initialValue: prompt.title)
             _promptText = State(initialValue: prompt.promptText)
             _useSystemInstructions = State(initialValue: prompt.useSystemInstructions)
+            _addsVoiceMark = State(initialValue: prompt.addsVoiceMark)
         }
     }
 
@@ -83,6 +86,7 @@ struct PromptEditorView: View {
 
                     instructionsEditor
                     systemTemplateToggle
+                    voiceMarkToggle  // Fork F14
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 76)
@@ -143,6 +147,22 @@ struct PromptEditorView: View {
                     Text("Use System Template")
                     InfoTip(
                         "If enabled, your instructions are combined with a general-purpose template to improve transcription quality.\n\nDisable for full control over the AI's system prompt (for advanced users)."
+                    )
+                }
+            }
+            .toggleStyle(.switch)
+
+            Spacer(minLength: 12)
+        }
+    }
+
+    private var voiceMarkToggle: some View {
+        HStack(spacing: 12) {
+            Toggle(isOn: $addsVoiceMark) {
+                HStack(spacing: 4) {
+                    Text("Start with the Voice Mark")
+                    InfoTip(
+                        "If enabled, the result starts with the voice mark, \"[voice] \" unless you change it. Set the mark, or a different one for an app, in Settings → Voice Mark."
                     )
                 }
             }
@@ -235,14 +255,16 @@ struct PromptEditorView: View {
             return enhancementService.addPrompt(
                 title: title,
                 promptText: promptText,
-                useSystemInstructions: useSystemInstructions
+                useSystemInstructions: useSystemInstructions,
+                addsVoiceMark: addsVoiceMark
             )
         case .edit(let prompt):
             let updatedPrompt = CustomPrompt(
                 id: prompt.id,
                 title: title,
                 promptText: promptText,
-                useSystemInstructions: useSystemInstructions
+                useSystemInstructions: useSystemInstructions,
+                addsVoiceMark: addsVoiceMark
             )
             enhancementService.updatePrompt(updatedPrompt)
             return updatedPrompt

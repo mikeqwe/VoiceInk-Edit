@@ -1,6 +1,7 @@
 // swift-tools-version:5.9
 // Unit tests for fork F11 (the effort on the Anthropic requests of cleanup, Rewrite and Suggest,
-// and which takes capture the screen) and F12 (the output language follows the keyboard layout).
+// and which takes capture the screen), F12 (the output language follows the keyboard layout) and F14
+// (the voice mark, set once and per app).
 // Sources/EditingRequest/*.swift are symlinks to the files
 // the app compiles, so these tests run the shipped decisions. Run: swift test
 import PackageDescription

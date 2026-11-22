@@ -201,7 +201,9 @@ class ImportExportService {
             enhancementModelEffort: EditingModelEffort.current(EditingModelEffort.enhancement).effort.rawValue,
             suggestModelEffort: EditingModelEffort.current(EditingModelEffort.suggest).effort.rawValue,
             outputDictationLanguage: OutputLanguage.dictationLanguage() ?? "",
-            outputLanguageApps: OutputLanguage.bundleIdentifiers().apps
+            outputLanguageApps: OutputLanguage.bundleIdentifiers().apps,
+            voiceMark: VoiceMark.storedDefaultMark().mark,
+            voiceMarkApps: VoiceMark.appMarks().marks
         )
 
         let exportedSettings = BackupFile(

@@ -195,6 +195,8 @@ class VoiceInkEngine: NSObject, ObservableObject {
             // Fork F12: the output language follows the layout active at the release.
             contextStore?.updateOutputLanguage(
                 OutputLanguageMonitor.shared.decisionForTakeEndingNow(mode: ModeManager.shared.currentEffectiveConfiguration))
+            // Fork F14: the voice mark is the one of the app the take ends in.
+            contextStore?.updateAppBundleIdentifier(OutputLanguageMonitor.frontAppBundleIdentifier())
             let session = currentSession
             let transcriptionConfiguration = currentSessionTranscriptionConfiguration
                 ?? ModeRuntimeResolver.transcriptionConfiguration(transcriptionModelManager: transcriptionModelManager)

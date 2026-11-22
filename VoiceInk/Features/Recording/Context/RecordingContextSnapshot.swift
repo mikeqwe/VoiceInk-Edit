@@ -9,6 +9,8 @@ struct RecordingContextSnapshot {
     var screenText: String?
     /// Fork F12: decided at the release; `.off` until then.
     var outputLanguage: OutputLanguage.Decision = .off
+    /// Fork F14: the front app at the release, whose voice mark the take gets; nil until then.
+    var appBundleIdentifier: String?
 }
 
 @MainActor
@@ -26,6 +28,10 @@ final class RecordingContextSnapshotStore {
 
     func updateOutputLanguage(_ decision: OutputLanguage.Decision) {
         snapshot.outputLanguage = decision
+    }
+
+    func updateAppBundleIdentifier(_ bundleIdentifier: String?) {
+        snapshot.appBundleIdentifier = bundleIdentifier
     }
 
     func updateScreenText(_ text: String?) {

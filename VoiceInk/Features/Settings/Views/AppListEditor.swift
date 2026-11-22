@@ -3,7 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Fork: rows for a list of apps by bundle identifier, with Remove, Add App… and Restore Defaults.
-/// Used by Keep Web Accessibility On (F5) and Follow the Layout In (F12).
+/// Used by Keep Web Accessibility On (F5) and Follow the Layout In (F12); its app chooser and names
+/// also by the voice mark's per-app list (F14).
 struct AppListEditor: View {
     let apps: [String]
     let defaultApps: [String]
@@ -32,22 +33,22 @@ struct AppListEditor: View {
         }
 
         HStack(spacing: 8) {
-            Button("Add App…") { chooseApp() }
+            Button("Add App…") { save(apps + Self.chooseApps()) }
             Button("Restore Defaults") { save(defaultApps) }
                 .disabled(apps == defaultApps)
         }
     }
 
-    private func chooseApp() {
+    /// The bundle identifiers of the apps picked in an open panel; none when it is cancelled.
+    static func chooseApps() -> [String] {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.application]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
         panel.prompt = String(localized: "Add")
-        guard panel.runModal() == .OK else { return }
-        let added = panel.urls.compactMap { Bundle(url: $0)?.bundleIdentifier }
-        save(apps + added)
+        guard panel.runModal() == .OK else { return [] }
+        return panel.urls.compactMap { Bundle(url: $0)?.bundleIdentifier }
     }
 
     static func appName(for bundleId: String) -> String? {

@@ -257,6 +257,12 @@ enum BackupImporter {
         if let apps = general.outputLanguageApps {
             OutputLanguage.setBundleIdentifiers(apps)
         }
+        if let mark = general.voiceMark {
+            VoiceMark.setDefaultMark(mark)
+        }
+        if let marks = general.voiceMarkApps {
+            VoiceMark.setAppMarks(marks)
+        }
         if let usesScreenText = general.suggestUsesScreenText {
             UserDefaults.standard.set(usesScreenText, forKey: SuggestCore.screenTextDefaultsKey)
         }

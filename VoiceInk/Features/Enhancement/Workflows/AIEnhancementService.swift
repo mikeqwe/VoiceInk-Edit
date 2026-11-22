@@ -46,6 +46,8 @@ class AIEnhancementService: ObservableObject {
             let decodedPrompts = try? JSONDecoder().decode([CustomPrompt].self, from: savedPromptsData)
         {
             self.customPrompts = decodedPrompts
+            // Fork F14: store prompts converted from the legacy mark sentence in the new form.
+            savePrompts()
         } else {
             self.customPrompts = []
         }
@@ -329,7 +331,7 @@ class AIEnhancementService: ObservableObject {
             let endTime = Date()
             let duration = endTime.timeIntervalSince(startTime)
             return AIEnhancementResult(
-                text: requestResult.text,
+                text: markedText(requestResult.text, prompt: configuration.prompt, app: contextSnapshot?.appBundleIdentifier),
                 duration: duration,
                 promptName: promptName,
                 systemMessage: requestResult.systemMessage,
@@ -345,6 +347,14 @@ class AIEnhancementService: ObservableObject {
             )
             throw error
         }
+    }
+
+    /// Fork F14: the voice mark goes in front of the result of every prompt that asks for it.
+    private func markedText(_ text: String, prompt: CustomPrompt?, app: String?) -> String {
+        guard let (resolution, invalid) = VoiceMark.resolve(promptAddsMark: prompt?.addsVoiceMark == true, app: app)
+        else { return text }
+        logger.notice("\(VoiceMark.logLine(resolution: resolution, app: app, invalidSettings: invalid), privacy: .public)")
+        return VoiceMark.applied(resolution.mark, to: text)
     }
 
     func captureScreenContext() async {
@@ -369,12 +379,14 @@ class AIEnhancementService: ObservableObject {
     func addPrompt(
         title: String,
         promptText: String,
-        useSystemInstructions: Bool = true
+        useSystemInstructions: Bool = true,
+        addsVoiceMark: Bool = false
     ) -> CustomPrompt {
         let newPrompt = CustomPrompt(
             title: title,
             promptText: promptText,
-            useSystemInstructions: useSystemInstructions
+            useSystemInstructions: useSystemInstructions,
+            addsVoiceMark: addsVoiceMark
         )
         customPrompts.append(newPrompt)
         return newPrompt

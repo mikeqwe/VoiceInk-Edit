@@ -155,6 +155,7 @@ struct SettingsView: View {
             SuggestSettingsSection()  // Fork
 
             OutputLanguageSettingsSection()  // Fork F12
+            VoiceMarkSettingsSection()  // Fork F14
 
             Section("Pasting") {
                 Picker(selection: $finishAndSendKey) {

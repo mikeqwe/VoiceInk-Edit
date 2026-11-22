@@ -6,29 +6,40 @@ struct CustomPrompt: Identifiable, Codable, Equatable {
     let title: String
     let promptText: String
     let useSystemInstructions: Bool
+    /// Fork F14: the result starts with the voice mark (`VoiceMark`), put there by the app.
+    let addsVoiceMark: Bool
 
     init(
         id: UUID = UUID(),
         title: String,
         promptText: String,
-        useSystemInstructions: Bool = true
+        useSystemInstructions: Bool = true,
+        addsVoiceMark: Bool = false
     ) {
         self.id = id
         self.title = title
         self.promptText = promptText
         self.useSystemInstructions = useSystemInstructions
+        self.addsVoiceMark = addsVoiceMark
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, promptText, useSystemInstructions
+        case id, title, promptText, useSystemInstructions, addsVoiceMark
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
-        promptText = try container.decode(String.self, forKey: .promptText)
+        let storedText = try container.decode(String.self, forKey: .promptText)
         useSystemInstructions = try container.decodeIfPresent(Bool.self, forKey: .useSystemInstructions) ?? true
+        if let addsVoiceMark = try container.decodeIfPresent(Bool.self, forKey: .addsVoiceMark) {
+            promptText = storedText
+            self.addsVoiceMark = addsVoiceMark
+        } else {
+            // Stored before F14 (or by upstream VoiceInk): the mark, if any, is a sentence of the text.
+            (promptText, addsVoiceMark) = VoiceMark.legacyConversion(of: storedText)
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -37,6 +48,7 @@ struct CustomPrompt: Identifiable, Codable, Equatable {
         try container.encode(title, forKey: .title)
         try container.encode(promptText, forKey: .promptText)
         try container.encode(useSystemInstructions, forKey: .useSystemInstructions)
+        try container.encode(addsVoiceMark, forKey: .addsVoiceMark)
     }
 
     var finalPromptText: String {
