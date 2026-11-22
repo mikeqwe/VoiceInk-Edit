@@ -203,7 +203,9 @@ class ImportExportService {
             outputDictationLanguage: OutputLanguage.dictationLanguage() ?? "",
             outputLanguageApps: OutputLanguage.bundleIdentifiers().apps,
             voiceMark: VoiceMark.storedDefaultMark().mark,
-            voiceMarkApps: VoiceMark.appMarks().marks
+            voiceMarkApps: VoiceMark.appMarks().marks,
+            explainAnswerLanguage: UserDefaults.standard.string(forKey: SuggestLanguage.explainDefaultsKey),
+            suggestWritingLanguage: UserDefaults.standard.string(forKey: SuggestLanguage.writingDefaultsKey)
         )
 
         let exportedSettings = BackupFile(

@@ -9,6 +9,9 @@ struct SuggestSettingsSection: View {
     @AppStorage(EditingModelEffort.enhancement.defaultsKey) private var enhancementEffort = EditingModelEffort.enhancement.standard.rawValue
     @AppStorage(EditingModelEffort.suggest.defaultsKey) private var suggestEffort = EditingModelEffort.suggest.standard.rawValue
     @State private var keepOnApps = WebAccessibilityKeepOn.bundleIdentifiers()
+    @AppStorage(SuggestLanguage.explainDefaultsKey) private var explainLanguage = SuggestLanguage.defaultExplainLanguage()
+    @AppStorage(SuggestLanguage.writingDefaultsKey) private var writingLanguage = SuggestLanguage.defaultWritingLanguage()
+    private let layoutLanguages = OutputLanguageMonitor.enabledLayoutLanguages()
 
     var body: some View {
         Section {
@@ -28,7 +31,7 @@ struct SuggestSettingsSection: View {
             } label: {
                 HStack(spacing: 4) {
                     Text("Explain Selection")
-                    InfoTip("Select text in any app and press this shortcut. VoiceInk explains it in the Suggest panel, in Russian with terms as written, using the same context as Suggest. The answer is never pasted: press 1 to copy it, Esc to close.")
+                    InfoTip("Select text in any app and press this shortcut. VoiceInk explains it in the Suggest panel, in the language set in Explain In below, with terms as written, using the same context as Suggest. The answer is never pasted: press 1 to copy it, Esc to close.")
                 }
             }
 
@@ -38,7 +41,29 @@ struct SuggestSettingsSection: View {
             } label: {
                 HStack(spacing: 4) {
                     Text("Ask About Selection")
-                    InfoTip("Select text and press this shortcut, speak a question, then press it again. The take runs in the first mode whose Output is Show; the answer shows in the Suggest panel and is never pasted. Pressed while an answer shows, it asks a follow-up. Questions about what an agent meant are better asked in that agent's own side chat.")
+                    InfoTip("Select text and press this shortcut, speak a question, then press it again. The take runs in the first mode whose Output is Show; the answer shows in the Suggest panel and is never pasted. Pressed while an answer shows, it asks a follow-up. The answer is in the language of the question. Questions about what an agent meant are better asked in that agent's own side chat.")
+                }
+            }
+
+            Picker(selection: $explainLanguage) {
+                ForEach(SuggestLanguage.choices(current: explainLanguage, preferred: Locale.preferredLanguages, layouts: layoutLanguages), id: \.self) { code in
+                    Text(OutputLanguage.englishName(code)).tag(code)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Explain In")
+                    InfoTip("The language Explain Selection answers in. Terms, names and code stay as written. Ask About Selection answers in the language of the question. The default is the Mac's first preferred language.")
+                }
+            }
+
+            Picker(selection: $writingLanguage) {
+                ForEach(SuggestLanguage.choices(current: writingLanguage, preferred: Locale.preferredLanguages, layouts: layoutLanguages), id: \.self) { code in
+                    Text(code == SuggestLanguage.english ? "English only" : "\(OutputLanguage.englishName(code)) and English").tag(code)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("I Write In")
+                    InfoTip("Suggest assumes you write this language and English, and that you sometimes spell English terms and names in its letters, as they sound. For such a selection it offers the English original, and it checks spelling in both languages. English only offers no such originals. The default is the first of the Mac's preferred languages that is not English.")
                 }
             }
 

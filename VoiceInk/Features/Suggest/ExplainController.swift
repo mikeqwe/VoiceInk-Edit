@@ -40,6 +40,8 @@ final class ExplainController {
         let selection: String
         let context: SuggestCore.Context
         let systemPrompt: String
+        /// Fork F16, for the log: Explain's language code, or "question" for Ask.
+        let answerLanguage: String
         let provider: AIProvider
         let model: String?
         let app: String?
@@ -192,11 +194,13 @@ final class ExplainController {
         Self.logger.notice("Explain screen \(screen.logFields, privacy: .public)")
         let kind = session?.kind ?? .explain
         let vocabulary = modelContext.map { CustomVocabularyService.shared.loadSavedVocabulary(from: $0) }
+        let explainLanguage = SuggestLanguage.explainLanguage()
         return Captured(
             selection: selection,
             context: SuggestCore.adding(screenText: screenText, to: accessibility),
-            systemPrompt: [ExplainCore.systemPrompt(kind: kind), vocabulary?.enhancementSection ?? ""]
+            systemPrompt: [ExplainCore.systemPrompt(kind: kind, explainLanguage: explainLanguage), vocabulary?.enhancementSection ?? ""]
                 .filter { !$0.isEmpty }.joined(separator: "\n\n"),
+            answerLanguage: kind == .explain ? explainLanguage : "question",
             provider: target.provider,
             model: target.model,
             app: app?.bundleIdentifier
@@ -210,7 +214,7 @@ final class ExplainController {
         let effort = EditingModelEffort.current(EditingModelEffort.suggest)
         let context = captured.context
         let aroundChars = context.around.map { $0.before.utf16.count + $0.after.utf16.count } ?? 0
-        Self.logger.notice("Explain request kind=\(session.kind.rawValue, privacy: .public) provider=\(captured.provider.rawValue, privacy: .public) model=\(captured.model ?? "default", privacy: .public) selectionChars=\(captured.selection.count, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) screenChars=\(context.screen?.utf16.count ?? 0, privacy: .public) earlier=\(self.earlier.count, privacy: .public) afterPressSeconds=\(Date().timeIntervalSince(self.pressedAt), format: .fixed(precision: 2), privacy: .public)")
+        Self.logger.notice("Explain request kind=\(session.kind.rawValue, privacy: .public) provider=\(captured.provider.rawValue, privacy: .public) model=\(captured.model ?? "default", privacy: .public) selectionChars=\(captured.selection.count, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) screenChars=\(context.screen?.utf16.count ?? 0, privacy: .public) earlier=\(self.earlier.count, privacy: .public) answerLanguage=\(captured.answerLanguage, privacy: .public) afterPressSeconds=\(Date().timeIntervalSince(self.pressedAt), format: .fixed(precision: 2), privacy: .public)")
         let started = Date()
         do {
             let completion = try await aiService.performChatCompletion(

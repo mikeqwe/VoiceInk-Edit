@@ -90,7 +90,7 @@ final class SuggestF8Tests: XCTestCase {
     }
 
     func testThePromptAsksForMeaningFirstAndSaysACorrectWordStillNeedsAlternatives() {
-        let prompt = SuggestCore.systemPrompt
+        let prompt = SuggestCore.systemPrompt(writingLanguage: "ru")
         XCTAssertTrue(prompt.contains(#"{"meaning": "...", "replacements": ["...", "..."]}"#), prompt)
         XCTAssertTrue(prompt.contains("even when the SELECTION is a correctly spelled word"), prompt)
         XCTAssertTrue(prompt.contains("even when the SELECTION looks right"), prompt)

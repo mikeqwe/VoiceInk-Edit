@@ -964,7 +964,24 @@ enum SuggestCore {
 
     static let otherTextNote = "other text visible in the same window; may be unrelated"
 
-    static let systemPrompt = """
+    /// Fork F16: the Suggest prompt for the language the user writes besides English
+    /// (`SuggestLanguage.writingLanguage`), or for English only (nil). With "ru" it is the prompt as it was
+    /// before the setting, examples included.
+    static func systemPrompt(writingLanguage: String?) -> String {
+        let writes = writingLanguage.map(OutputLanguage.englishName)
+        let originalOption = writes.map { "the English original of a term written in \($0) letters (see below); " } ?? ""
+        let writingRule = writes.map { name in
+            """
+            - The user writes \(name) and English and often writes English terms and names in \
+            \(name) letters, as they sound. When the SELECTION is in \(name) letters and may be such \
+            an English word, term or name\(writingLanguage.flatMap { transliterationExamples[$0] }.map { " " + $0 } ?? ""), \
+            the English original in English letters must be one of \
+            the replacements, even inside a \(name) sentence; rank it by how likely it is. The same \
+            holds the other way round. Do not force the language of the surrounding text.
+
+            """
+        } ?? ""
+        return """
         The user selected some text, given as SELECTION: a word, a phrase or a few lines. The \
         selected text is not right here. The user wants something else in its place, even when the \
         SELECTION is a correctly spelled word. Return exactly \(requestedReplacements) replacements \
@@ -973,8 +990,7 @@ enum SuggestCore {
 
         Rules for the replacements:
         - Each one is something the user may have meant instead: a word or phrase that sounds like \
-        the SELECTION and fits the text better; the English original of a term written in Russian \
-        letters (see below); a different word or wording with a meaning that fits the text; or, when \
+        the SELECTION and fits the text better; \(originalOption)a different word or wording with a meaning that fits the text; or, when \
         the SELECTION is misspelled, its correct spelling. When the SELECTION is a real word that \
         fits the text, most replacements are different words or wordings with a fitting meaning.
         - Each one is a real, correctly spelled word, phrase or name. Never a misspelling: never the \
@@ -991,13 +1007,7 @@ enum SuggestCore {
         SELECTION, only in letter case, punctuation or spacing count as one; return only the best \
         of them. The one exception: when the SELECTION's own error is its letter case or \
         punctuation, one replacement may fix only that.
-        - The user writes Russian and English and often writes English terms and names in \
-        Russian letters, as they sound. When the SELECTION is in Russian letters and may be such \
-        an English word, term or name (for example «Клод» is "Claude", «пулл реквест» is "pull \
-        request", «фича» is "feature"), the English original in English letters must be one of \
-        the replacements, even inside a Russian sentence; rank it by how likely it is. The same \
-        holds the other way round. Do not force the language of the surrounding text.
-        - Prefer replacements that make sense in the text over words that only sound alike.
+        \(writingRule)- Prefer replacements that make sense in the text over words that only sound alike.
         - When fewer such replacements exist, add other words or wordings that fit the text and \
         keep its meaning.
 
@@ -1011,6 +1021,26 @@ enum SuggestCore {
         text says at the SELECTION's place and who says it to whom, then "replacements" with exactly \
         \(requestedReplacements) distinct items.
         """
+    }
+
+    /// Fork F16: examples of English terms spelled in a language's letters, for the prompt's rule.
+    static let transliterationExamples: [String: String] = [
+        "ru": #"(for example «Клод» is "Claude", «пулл реквест» is "pull request", «фича» is "feature")"#,
+    ]
+
+    /// Fork F16: the spell checkers the misspelling guard asks about one word, given the language the user
+    /// writes besides English (nil: English only). A word that mixes Cyrillic and Latin letters is never a
+    /// real word (nil). Otherwise only checkers of the word's own script are asked: the English checker
+    /// passes any Cyrillic word, and the Russian one any Latin word. An empty list means no checker knows
+    /// the word's script, so the guard treats it as a word and drops nothing for it.
+    static func spellingLanguages(forWord word: String, writingLanguage: String?) -> [String]? {
+        let cyrillic = word.unicodeScalars.contains { (0x0400...0x04FF).contains($0.value) }
+        let latin = word.unicodeScalars.contains { ("a"..."z").contains($0) || ("A"..."Z").contains($0) }
+        if cyrillic && latin { return nil }
+        var seen = Set<String>()
+        return [writingLanguage, SuggestLanguage.english].compactMap { $0 }
+            .filter { seen.insert($0).inserted && SuggestLanguage.isCyrillic($0) == cyrillic }
+    }
 
     static func userMessage(selection: String, context: Context, rejected: [String] = []) -> String {
         var parts: [String] = []

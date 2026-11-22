@@ -37,6 +37,8 @@ final class SuggestController {
         let model: String?
         /// The user's vocabulary terms: the misspelling guard never drops them.
         let vocabulary: [String]
+        /// Fork F16: the language the user writes besides English, nil for English only.
+        let writingLanguage: String?
     }
 
     /// Suggest waits at least this long for the model. The whole field text can be tens of
@@ -260,13 +262,16 @@ final class SuggestController {
         let context = SuggestCore.adding(screenText: screenText, to: accessibilityContext)
         session?.rawSelectionRead(context.around?.selected)
         let vocabulary = CustomVocabularyService.shared.loadSavedVocabulary(from: modelContext)
+        let writingLanguage = SuggestLanguage.writingLanguage()
         let request = Request(
             selection: selection,
             context: context,
-            systemPrompt: [SuggestCore.systemPrompt, vocabulary.enhancementSection].filter { !$0.isEmpty }.joined(separator: "\n\n"),
+            systemPrompt: [SuggestCore.systemPrompt(writingLanguage: writingLanguage), vocabulary.enhancementSection]
+                .filter { !$0.isEmpty }.joined(separator: "\n\n"),
             provider: target.provider,
             model: target.model,
-            vocabulary: vocabulary.terms
+            vocabulary: vocabulary.terms,
+            writingLanguage: writingLanguage
         )
         asked = request
         await ask(request, rejected: [])
@@ -281,7 +286,7 @@ final class SuggestController {
         let otherChars = context.other.reduce(0) { $0 + $1.utf16.count }
         let screenChars = context.screen?.utf16.count ?? 0
         let effort = EditingModelEffort.current(EditingModelEffort.suggest)
-        Self.logger.notice("Suggest request provider=\(request.provider.rawValue, privacy: .public) model=\(request.model ?? "default", privacy: .public) selectionChars=\(request.selection.count, privacy: .public) context=\(context.around != nil, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) otherChars=\(otherChars, privacy: .public) screenChars=\(screenChars, privacy: .public) effort=\(request.provider == .anthropic ? effort.effort.logValue(model: request.model ?? "default", invalid: effort.invalid) : "n/a", privacy: .public) rejected=\(rejected.count, privacy: .public)")
+        Self.logger.notice("Suggest request provider=\(request.provider.rawValue, privacy: .public) model=\(request.model ?? "default", privacy: .public) selectionChars=\(request.selection.count, privacy: .public) context=\(context.around != nil, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) otherChars=\(otherChars, privacy: .public) screenChars=\(screenChars, privacy: .public) effort=\(request.provider == .anthropic ? effort.effort.logValue(model: request.model ?? "default", invalid: effort.invalid) : "n/a", privacy: .public) rejected=\(rejected.count, privacy: .public) writingLanguage=\(request.writingLanguage ?? "en-only", privacy: .public)")
         let started = Date()
         do {
             let completion = try await aiService.performChatCompletion(
@@ -295,7 +300,8 @@ final class SuggestController {
                 anthropicEffort: effort.effort
             )
             guard isCurrent else { return }
-            let spelling = SuggestCore.Spelling(isWord: SuggestSpelling.isWord, vocabulary: request.vocabulary)
+            let spelling = SuggestCore.Spelling(
+                isWord: { SuggestSpelling.isWord($0, writingLanguage: request.writingLanguage) }, vocabulary: request.vocabulary)
             let items = SuggestCore.replacements(
                 fromModelOutput: completion.text, original: request.selection, excluding: rejected, spelling: spelling)
             let answered = SuggestCore.answerItemCount(completion.text).map(String.init)
@@ -1320,13 +1326,19 @@ private struct SuggestKeyChip: View {
 /// checker of its own script: the English checker passes any Cyrillic word, and a word that mixes
 /// the two scripts is never a real word.
 enum SuggestSpelling {
-    static func isWord(_ word: String) -> Bool {
-        let cyrillic = word.unicodeScalars.contains { (0x0400...0x04FF).contains($0.value) }
-        let latin = word.unicodeScalars.contains { ("a"..."z").contains($0) || ("A"..."Z").contains($0) }
-        if cyrillic && latin { return false }
-        let range = NSSpellChecker.shared.checkSpelling(
-            of: word, startingAt: 0, language: cyrillic ? "ru" : "en", wrap: false,
-            inSpellDocumentWithTag: 0, wordCount: nil)
-        return range.location == NSNotFound
+    /// Fork F16: the checkers come from `SuggestCore.spellingLanguages` (the writing language and English,
+    /// by script); a word is real when one of them knows it. A checker macOS does not have is skipped, and
+    /// a word no checker can judge counts as a word, so the guard drops nothing for it.
+    static func isWord(_ word: String, writingLanguage: String?) -> Bool {
+        guard let languages = SuggestCore.spellingLanguages(forWord: word, writingLanguage: writingLanguage) else { return false }
+        let checker = NSSpellChecker.shared
+        let available = Set(checker.availableLanguages.compactMap(OutputLanguage.primaryLanguage))
+        let usable = languages.filter(available.contains)
+        guard !usable.isEmpty else { return true }
+        return usable.contains { language in
+            checker.checkSpelling(
+                of: word, startingAt: 0, language: language, wrap: false,
+                inSpellDocumentWithTag: 0, wordCount: nil).location == NSNotFound
+        }
     }
 }

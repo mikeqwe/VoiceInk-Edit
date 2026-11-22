@@ -23,7 +23,7 @@ final class SuggestF11Tests: XCTestCase {
             """)
         XCTAssertTrue(SuggestCore.screenTextNote.contains("OCR"))
         XCTAssertTrue(SuggestCore.screenTextNote.contains("may be unrelated"))
-        XCTAssertTrue(SuggestCore.systemPrompt.contains("SCREEN_TEXT, when present, is \(SuggestCore.screenTextNote)."),
+        XCTAssertTrue(SuggestCore.systemPrompt(writingLanguage: "ru").contains("SCREEN_TEXT, when present, is \(SuggestCore.screenTextNote)."),
                       "the model is told what SCREEN_TEXT is")
     }
 

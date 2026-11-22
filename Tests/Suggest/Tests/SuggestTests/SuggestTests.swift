@@ -312,7 +312,7 @@ final class SuggestTests: XCTestCase {
     // MARK: The prompt (F3)
 
     func testPromptSaysTheSelectionIsNotRightWithoutAReason() {
-        let prompt = SuggestCore.systemPrompt
+        let prompt = SuggestCore.systemPrompt(writingLanguage: "ru")
         XCTAssertTrue(prompt.contains("The selected text is not right here."), prompt)
         for reason in ["speech", "recogni", "mistake", "misheard", "typo", "because", "Cyrillic"] {
             XCTAssertFalse(prompt.localizedCaseInsensitiveContains(reason), "gives a reason: \(reason)")

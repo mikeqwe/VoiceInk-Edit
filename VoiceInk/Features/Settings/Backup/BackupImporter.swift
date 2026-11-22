@@ -263,6 +263,17 @@ enum BackupImporter {
         if let marks = general.voiceMarkApps {
             VoiceMark.setAppMarks(marks)
         }
+        for (language, key) in [
+            (general.explainAnswerLanguage, SuggestLanguage.explainDefaultsKey),
+            (general.suggestWritingLanguage, SuggestLanguage.writingDefaultsKey),
+        ] {
+            guard let language else { continue }
+            if let code = OutputLanguage.primaryLanguage(language) {
+                UserDefaults.standard.set(code, forKey: key)
+            } else {
+                print("Skipped \(key) \"\(language)\": not a language code.")
+            }
+        }
         if let usesScreenText = general.suggestUsesScreenText {
             UserDefaults.standard.set(usesScreenText, forKey: SuggestCore.screenTextDefaultsKey)
         }

@@ -6,7 +6,7 @@ import XCTest
 /// the selection call for it, and for none when the selection's own form fits.
 final class SuggestF10Tests: XCTestCase {
     func testThePromptAsksForTheFormTheTextNeeds() {
-        let prompt = SuggestCore.systemPrompt
+        let prompt = SuggestCore.systemPrompt(writingLanguage: "ru")
         XCTAssertTrue(prompt.contains(
             "When another form of the SELECTION's own word fits the text around it better, that form is a likely replacement; rank it by how likely it is."),
             prompt)
@@ -26,7 +26,7 @@ final class SuggestF10Tests: XCTestCase {
     }
 
     func testTheF10EvaluationWordsAreNotPromptExamples() {
-        let prompt = SuggestCore.systemPrompt
+        let prompt = SuggestCore.systemPrompt(writingLanguage: "ru")
         for word in ["расскажу", "расскажи", "рассказал", "дизайнер", "стала", "коротко", "runs the test", "run the test"] {
             XCTAssertFalse(prompt.contains(word), "an evaluation word is in the prompt: \(word)")
         }
