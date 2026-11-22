@@ -349,14 +349,21 @@ final class ExplainController {
     }
 
     /// The panel closes as Suggest's list does (F7): a click outside, an app switch, a focus change, or
-    /// a key that changes the text (⏎ among them: it still reaches the app). While the question is
+    /// a key that changes the text; and on ⏎, which still reaches the app (`ExplainCore.closesOnKey`). While the question is
     /// recorded, only an app switch closes it; the take's own keys belong to the recorder.
     private func outside(_ event: SuggestCore.OutsideEvent) {
         guard let session else { return }
         if session.isListening {
             guard case .appActivated(let isTarget) = event, !isTarget else { return }
         }
-        guard let reason = SuggestCore.closeReason(for: event, phase: .thinking) else { return }
+        let reason: String
+        if case .keyDown(let key) = event {
+            guard ExplainCore.closesOnKey(key) else { return }
+            reason = "typing"
+        } else {
+            guard let other = SuggestCore.closeReason(for: event, phase: .thinking) else { return }
+            reason = other
+        }
         Self.logger.notice("Explain closed reason=\(reason, privacy: .public)")
         finish()
     }

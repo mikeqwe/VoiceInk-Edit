@@ -118,6 +118,26 @@ final class SuggestF13Tests: XCTestCase {
         XCTAssertEqual(shown.handle(.copy), .none, "one copy per answer")
     }
 
+    func testReturnAndTypingCloseThePanelItsOwnKeysAndNavigationDoNot() {
+        func key(_ code: UInt16, _ chars: String, command: Bool = false, control: Bool = false) -> SuggestCore.TypedKey {
+            SuggestCore.TypedKey(keyCode: code, characters: chars, command: command, control: control)
+        }
+        XCTAssertTrue(ExplainCore.closesOnKey(key(36, "\r")), "Return reaches the app and closes the answer")
+        XCTAssertTrue(ExplainCore.closesOnKey(key(76, "\u{3}")), "keypad Enter too")
+        XCTAssertTrue(ExplainCore.closesOnKey(key(0, "a")))
+        XCTAssertTrue(ExplainCore.closesOnKey(key(51, "\u{7f}")))
+        XCTAssertFalse(ExplainCore.closesOnKey(key(123, "\u{F702}")), "an arrow keeps it")
+        XCTAssertFalse(ExplainCore.closesOnKey(key(8, "c", command: true)), "⌘C keeps it")
+        XCTAssertFalse(ExplainCore.closesOnKey(key(18, "1")), "its own copy key is not typing")
+        XCTAssertFalse(ExplainCore.closesOnKey(key(53, "\u{1b}")), "its own Esc is handled by the panel")
+        XCTAssertTrue(SuggestCore.keyBindings.allSatisfy { $0.keyCode != 36 && $0.keyCode != 76 }, "the panel never takes ⏎")
+    }
+
+    func testExplainKeepsToTheSelection() {
+        XCTAssertTrue(ExplainCore.systemPrompt(kind: .explain).contains("Explain the SELECTION only"))
+        XCTAssertTrue(ExplainCore.systemPrompt(kind: .ask).contains("Answer only what was asked"))
+    }
+
     func testABlankAnswerIsNoAnswer() {
         XCTAssertNil(ExplainCore.answer(fromModelOutput: " \n "))
         XCTAssertEqual(ExplainCore.answer(fromModelOutput: "\n Ответ. \n"), "Ответ.")

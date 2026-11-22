@@ -119,6 +119,14 @@ enum ExplainCore {
         }
     }
 
+    /// Whether a key the app receives closes the panel (`ExplainController`'s outside watch). As for Suggest's list,
+    /// a key that changes the text; and also ⏎ (Return or keypad Enter), which still reaches the app: once he
+    /// sends or breaks the line the answer is about text that has moved on. The panel's own keys are not text changes (`SuggestCore.changesText`).
+    static func closesOnKey(_ key: SuggestCore.TypedKey) -> Bool {
+        if key.keyCode == 36 || key.keyCode == 76 { return true }  // kVK_Return, kVK_ANSI_KeypadEnter
+        return SuggestCore.changesText(key)
+    }
+
     /// The model's answer as the panel shows it: trimmed, and nil when blank.
     static func answer(fromModelOutput output: String) -> String? {
         let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -153,7 +161,8 @@ enum ExplainCore {
                 The user selected some text, given as SELECTION, and wants to know what it means. Answer \
                 in Russian. Lead with the meaning, in one to three short sentences: what it means, then \
                 what it means here, in this text. For code, a command or an identifier, say what it does, \
-                in two to four sentences. For a longer passage, its point in plain words.
+                in two to four sentences. For a longer passage, its point in plain words. Explain the \
+                SELECTION only: never explain other terms from the text around it.
 
                 \(sharedRules)
                 """
@@ -161,7 +170,8 @@ enum ExplainCore {
             return """
                 The user selected some text, given as SELECTION, and asked a question about it, given as \
                 QUESTION (\(questionNote)). Answer the QUESTION about the SELECTION, leading with the \
-                answer, in one to four short sentences. Answer in the language of the QUESTION. EARLIER, \
+                answer, in one to four short sentences. Answer in the language of the QUESTION. Answer \
+                only what was asked. EARLIER, \
                 when present, holds earlier questions and answers about the same SELECTION, oldest \
                 first; the QUESTION may follow up on them.
 
