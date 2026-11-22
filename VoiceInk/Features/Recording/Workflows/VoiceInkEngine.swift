@@ -570,9 +570,17 @@ class VoiceInkEngine: NSObject, ObservableObject {
         )
         store.updateClipboardText(clipboardText)
         activeRecordingContextStore = store
+        // Fork F11: only a take whose mode sends screen context captures the screen (and its names).
+        let mode = ModeManager.shared.currentEffectiveConfiguration
+        let capturesScreen = RecordingScreenContext.captures(
+            aiEnhancementEnabled: mode?.isAIEnhancementEnabled ?? false,
+            usesVoiceInkRefine: mode?.selectedAIProvider == AIProvider.voiceInkRefine.rawValue,
+            useScreenCapture: mode?.useScreenCapture ?? false
+        )
         activeRecordingContextTasks = RecordingContextCaptureService.startCapture(
             into: store,
-            language: language
+            language: language,
+            capturesScreen: capturesScreen
         )
     }
 

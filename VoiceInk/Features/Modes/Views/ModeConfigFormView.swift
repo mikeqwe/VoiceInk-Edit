@@ -572,8 +572,13 @@ struct ModeConfigFormView: View {
             Toggle(isOn: $draft.useScreenCapture) {
                 HStack(spacing: 4) {
                     Text("Screen")
-                    InfoTip("Use text recognized from the active window as context for this mode.")
+                    InfoTip("Use text recognized from the active window as context for this mode. Needs the Screen Recording permission; turning this on asks for it.")
                 }
+            }
+            .onChange(of: draft.useScreenCapture) { _, isOn in
+                // Fork F11: stock VoiceInk asks for Screen Recording only during onboarding.
+                guard isOn else { return }
+                Task { _ = await ScreenCaptureService.requestScreenCapturePermissionRegistration() }
             }
         }
     }

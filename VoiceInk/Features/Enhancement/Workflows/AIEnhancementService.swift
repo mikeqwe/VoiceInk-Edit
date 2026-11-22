@@ -226,6 +226,12 @@ class AIEnhancementService: ObservableObject {
         }
 
         do {
+            let effort = EditingModelEffort.current()
+            if provider == .anthropic {
+                logger.notice(
+                    "Enhancement request model=\(modelName, privacy: .public) effort=\(effort.effort.logValue(model: modelName, invalid: effort.invalid), privacy: .public) screenContextChars=\(configuration.useScreenCaptureContext ? (contextSnapshot?.screenText?.count ?? 0) : -1, privacy: .public)"
+                )
+            }
             let completion = try await aiService.performChatCompletion(
                 provider: provider,
                 modelName: modelName,
@@ -233,7 +239,8 @@ class AIEnhancementService: ObservableObject {
                 systemPrompt: systemMessage,
                 localUserPrompt: formattedText,
                 timeout: requestTimeout,
-                retryOnTimeout: EnhancementRequestSettings.retryOnTimeout
+                retryOnTimeout: EnhancementRequestSettings.retryOnTimeout,
+                anthropicEffort: effort.effort
             )
             if let openRouterCompletion = completion.openRouterCompletion {
                 let routedProvider = openRouterCompletion.provider ?? "unknown"

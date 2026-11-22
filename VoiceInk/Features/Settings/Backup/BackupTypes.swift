@@ -110,6 +110,8 @@ struct GeneralBackup: Codable {
     let webAccessibilityKeepOnApps: [String]?
     let suggestPickKeyLabel: String?
     let suggestMoreKeyLabel: String?
+    let suggestUsesScreenText: Bool?
+    let editingModelEffort: String?
 }
 
 struct WordBackup: Codable {

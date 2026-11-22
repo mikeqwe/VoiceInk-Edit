@@ -247,6 +247,16 @@ enum BackupImporter {
         if let apps = general.webAccessibilityKeepOnApps {
             WebAccessibilityKeepOn.setBundleIdentifiers(apps)
         }
+        if let usesScreenText = general.suggestUsesScreenText {
+            UserDefaults.standard.set(usesScreenText, forKey: SuggestCore.screenTextDefaultsKey)
+        }
+        if let effort = general.editingModelEffort {
+            if EditingModelEffort(rawValue: effort) != nil {
+                UserDefaults.standard.set(effort, forKey: EditingModelEffort.defaultsKey)
+            } else {
+                print("Skipped editingModelEffort \(effort): not a known value.")
+            }
+        }
         for (label, key) in [
             (general.suggestPickKeyLabel, SuggestCore.FooterHints.pickKeyLabelDefaultsKey),
             (general.suggestMoreKeyLabel, SuggestCore.FooterHints.moreKeyLabelDefaultsKey),

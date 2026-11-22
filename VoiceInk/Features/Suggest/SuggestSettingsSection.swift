@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 /// accessibility on (`WebAccessibilityKeepOn`).
 struct SuggestSettingsSection: View {
     @AppStorage(WebAccessibilityKeepOn.defaultsKey) private var keepWebAccessibilityOn = true
+    @AppStorage(SuggestCore.screenTextDefaultsKey) private var usesScreenText = true
+    @AppStorage(EditingModelEffort.defaultsKey) private var effort = EditingModelEffort.standard.rawValue
     @State private var keepOnApps = WebAccessibilityKeepOn.bundleIdentifiers()
 
     var body: some View {
@@ -17,6 +19,29 @@ struct SuggestSettingsSection: View {
                 HStack(spacing: 4) {
                     Text("Suggest Replacement")
                     InfoTip("Select a word or a phrase in any app and press this shortcut. VoiceInk lists up to five replacements: press 1–5 or click one to paste it, or Esc to close. Press the shortcut again for a new set.")
+                }
+            }
+
+            Toggle(isOn: $usesScreenText) {
+                HStack(spacing: 4) {
+                    Text("Use Screen Text")
+                    InfoTip("Suggest also sends the text recognized in the front window, as extra context. The screenshot stays on this Mac; only the recognized text is sent. Needs the Screen Recording permission; turning this on asks for it.")
+                }
+            }
+            .onChange(of: usesScreenText) { _, isOn in
+                guard isOn else { return }
+                Task { _ = await ScreenCaptureService.requestScreenCapturePermissionRegistration() }
+            }
+
+            Picker(selection: $effort) {
+                Text("Low (faster)").tag(EditingModelEffort.low.rawValue)
+                Text("Medium").tag(EditingModelEffort.medium.rawValue)
+                Text("High").tag(EditingModelEffort.high.rawValue)
+                Text("Model default").tag(EditingModelEffort.modelDefault.rawValue)
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Claude Effort")
+                    InfoTip("How much a Claude model thinks before it answers, for every mode's AI enhancement (cleanup, Rewrite) and for Suggest. Low is the fastest. Model default sends no effort (Claude Haiku 5.5 then uses medium). Other providers and models without effort are unaffected.")
                 }
             }
 

@@ -14,7 +14,8 @@ extension AIService {
         systemPrompt: String? = nil,
         localUserPrompt: String? = nil,
         timeout: TimeInterval = 30,
-        retryOnTimeout: Bool = false
+        retryOnTimeout: Bool = false,
+        anthropicEffort: EditingModelEffort? = nil
     ) async throws -> AIChatCompletionResult {
         let resolvedModel = modelName?.isEmpty == false ? modelName! : selectedModel(for: provider)
 
@@ -33,14 +34,28 @@ extension AIService {
                 retryOnTimeout: retryOnTimeout
             )
         case .anthropic:
-            result = try await AnthropicLLMClient.chatCompletion(
-                apiKey: try chatAPIKey(for: provider, modelName: resolvedModel),
-                model: resolvedModel,
-                messages: messages,
-                systemPrompt: systemPrompt,
-                timeout: timeout,
-                retryOnTimeout: retryOnTimeout
-            )
+            // Fork F11: cleanup, Rewrite and Suggest pass their effort; a model that takes none, the
+            // "default" setting and every other caller send LLMkit's stock request.
+            if let effort = anthropicEffort?.requestValue(model: resolvedModel) {
+                result = try await AnthropicEffortClient.chatCompletion(
+                    apiKey: try chatAPIKey(for: provider, modelName: resolvedModel),
+                    model: resolvedModel,
+                    messages: messages,
+                    systemPrompt: systemPrompt,
+                    effort: effort,
+                    timeout: timeout,
+                    retryOnTimeout: retryOnTimeout
+                )
+            } else {
+                result = try await AnthropicLLMClient.chatCompletion(
+                    apiKey: try chatAPIKey(for: provider, modelName: resolvedModel),
+                    model: resolvedModel,
+                    messages: messages,
+                    systemPrompt: systemPrompt,
+                    timeout: timeout,
+                    retryOnTimeout: retryOnTimeout
+                )
+            }
         case .openRouter:
             let policy = OpenRouterRequestPolicy.lowLatency(
                 modelName: resolvedModel,

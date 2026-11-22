@@ -227,6 +227,8 @@ final class SuggestController {
     // MARK: - Selection and model
 
     private func fetch(modelContext: ModelContext, selection source: SelectionSource) async {
+        // F11: the window's OCR starts with the press, beside the selection and context reads.
+        let screen = SuggestScreenText(started: Date())
         let selection: String?
         switch source {
         case .readNow: selection = await SelectedTextService.fetchSelectedText(isEnabled: true)
@@ -248,8 +250,13 @@ final class SuggestController {
             return
         }
         let processID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        let context = await SuggestContextReader.read(processID: processID, selection: selection)
+        let accessibilityContext = await SuggestContextReader.read(processID: processID, selection: selection)
         guard isCurrent else { return }
+        let waitStarted = Date()
+        let screenText = await screen.value(by: screen.started.addingTimeInterval(SuggestCore.screenTextWait))
+        guard isCurrent else { return }
+        Self.logger.notice("Suggest screen \(screen.logFields, privacy: .public) waitedSeconds=\(Date().timeIntervalSince(waitStarted), format: .fixed(precision: 2), privacy: .public)")
+        let context = SuggestCore.adding(screenText: screenText, to: accessibilityContext)
         session?.rawSelectionRead(context.around?.selected)
         let vocabulary = CustomVocabularyService.shared.loadSavedVocabulary(from: modelContext)
         let request = Request(
@@ -271,7 +278,9 @@ final class SuggestController {
         let context = request.context
         let aroundChars = context.around.map { $0.before.utf16.count + $0.after.utf16.count } ?? 0
         let otherChars = context.other.reduce(0) { $0 + $1.utf16.count }
-        Self.logger.notice("Suggest request provider=\(request.provider.rawValue, privacy: .public) model=\(request.model ?? "default", privacy: .public) selectionChars=\(request.selection.count, privacy: .public) context=\(context.around != nil, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) otherChars=\(otherChars, privacy: .public) rejected=\(rejected.count, privacy: .public)")
+        let screenChars = context.screen?.utf16.count ?? 0
+        let effort = EditingModelEffort.current()
+        Self.logger.notice("Suggest request provider=\(request.provider.rawValue, privacy: .public) model=\(request.model ?? "default", privacy: .public) selectionChars=\(request.selection.count, privacy: .public) context=\(context.around != nil, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) otherChars=\(otherChars, privacy: .public) screenChars=\(screenChars, privacy: .public) effort=\(request.provider == .anthropic ? effort.effort.logValue(model: request.model ?? "default", invalid: effort.invalid) : "n/a", privacy: .public) rejected=\(rejected.count, privacy: .public)")
         let started = Date()
         do {
             let completion = try await aiService.performChatCompletion(
@@ -281,7 +290,8 @@ final class SuggestController {
                 systemPrompt: request.systemPrompt,
                 localUserPrompt: message,
                 timeout: max(EnhancementRequestSettings.timeout, Self.minimumRequestTimeout),
-                retryOnTimeout: false
+                retryOnTimeout: false,
+                anthropicEffort: effort.effort
             )
             guard isCurrent else { return }
             let spelling = SuggestCore.Spelling(isWord: SuggestSpelling.isWord, vocabulary: request.vocabulary)
@@ -440,6 +450,57 @@ final class SuggestController {
 /// Everything VoiceInk's Accessibility reader returns for the focused element, editable or
 /// read-only, up to `SuggestCore.contextCap`. No promise for apps whose elements it cannot
 /// read (Electron editors among them).
+/// F11: the front window's OCR text for one Suggest run (Settings → Suggest → *Use Screen Text*,
+/// and the Screen Recording permission). The capture starts at the press; the request takes it only
+/// if it is ready by the deadline, so a slow capture costs at most the wait, never a failed run.
+@MainActor
+final class SuggestScreenText {
+    let started: Date
+    private var state: String
+    private var text: String?
+    private var ocrSeconds: Double?
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    init(started: Date) {
+        self.started = started
+        guard SuggestCore.usesScreenText() else { state = "off"; return }
+        guard CGPreflightScreenCaptureAccess() else { state = "no-permission"; return }
+        state = "running"
+        Task { @MainActor in
+            let text = await ScreenCaptureService().captureAndExtractText()
+            self.ocrSeconds = Date().timeIntervalSince(started)
+            self.text = text
+            if self.state == "running" { self.state = text == nil ? "empty" : "ready" }
+            self.wake()
+        }
+    }
+
+    /// The OCR text if it is ready by `deadline`, else nil (the capture's late result is dropped).
+    func value(by deadline: Date) async -> String? {
+        if state == "running" {
+            let delay = max(0, deadline.timeIntervalSinceNow)
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                waiter = continuation
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    if self.state == "running" { self.state = "late" }
+                    self.wake()
+                }
+            }
+        }
+        return state == "ready" ? text : nil
+    }
+
+    var logFields: String {
+        "state=\(state) ocrSeconds=\(ocrSeconds.map { String(format: "%.2f", $0) } ?? "-") chars=\(state == "ready" ? text?.utf16.count ?? 0 : 0)"
+    }
+
+    private func wake() {
+        waiter?.resume()
+        waiter = nil
+    }
+}
+
 enum SuggestContextReader {
     private static let queue = DispatchQueue(label: "com.prakashjoshipax.voiceink.suggest-context", qos: .userInitiated)
 

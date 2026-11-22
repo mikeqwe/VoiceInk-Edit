@@ -196,7 +196,9 @@ class ImportExportService {
             keepWebAccessibilityOn: WebAccessibilityKeepOn.isEnabled(),
             webAccessibilityKeepOnApps: WebAccessibilityKeepOn.bundleIdentifiers(),
             suggestPickKeyLabel: UserDefaults.standard.string(forKey: SuggestCore.FooterHints.pickKeyLabelDefaultsKey),
-            suggestMoreKeyLabel: UserDefaults.standard.string(forKey: SuggestCore.FooterHints.moreKeyLabelDefaultsKey)
+            suggestMoreKeyLabel: UserDefaults.standard.string(forKey: SuggestCore.FooterHints.moreKeyLabelDefaultsKey),
+            suggestUsesScreenText: SuggestCore.usesScreenText(),
+            editingModelEffort: EditingModelEffort.current().effort.rawValue
         )
 
         let exportedSettings = BackupFile(
