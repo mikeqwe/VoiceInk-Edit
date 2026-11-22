@@ -22,6 +22,26 @@ struct SuggestSettingsSection: View {
                 }
             }
 
+            LabeledContent {
+                ShortcutRecorder(action: .explainSelection)
+                    .controlSize(.small)
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Explain Selection")
+                    InfoTip("Select text in any app and press this shortcut. VoiceInk explains it in the Suggest panel, in Russian with terms as written, using the same context as Suggest. The answer is never pasted: press 1 to copy it, Esc to close.")
+                }
+            }
+
+            LabeledContent {
+                ShortcutRecorder(action: .askAboutSelection)
+                    .controlSize(.small)
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Ask About Selection")
+                    InfoTip("Select text and press this shortcut, speak a question, then press it again. The take runs in the first mode whose Output is Show; the answer shows in the Suggest panel and is never pasted. Pressed while an answer shows, it asks a follow-up. Questions about what an agent meant are better asked in that agent's own side chat.")
+                }
+            }
+
             Toggle(isOn: $usesScreenText) {
                 HStack(spacing: 4) {
                     Text("Use Screen Text")

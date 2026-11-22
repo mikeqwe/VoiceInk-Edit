@@ -47,6 +47,14 @@ final class TranscriptionDelivery {
             return
         }
 
+        // Fork F13: Show hands the transcript to the Ask panel as its question; nothing is pasted.
+        if request.output.outputMode == .show {
+            SoundManager.shared.playStopSound()
+            ExplainController.shared.heard(request.text)
+            await actions.dismiss()
+            return
+        }
+
         if let text = request.text {
             let sendKey = request.sendAfterPaste ? FinishAndSendSettings.selectedKey : request.output.autoSendKey
             await paste(text, sendKey: sendKey, actions: actions)

@@ -157,14 +157,14 @@ struct ModeConfigDraft {
             autoSendKey = .none
         }
 
-        if outputMode == .respond {
+        if outputMode == .respond || outputMode == .show {
             isDefault = false
         }
     }
 
     func makeConfig(mode: ConfigurationMode) -> ModeConfig {
         let savedAutoSendKey: FinishAndSendKey = outputMode == .paste ? autoSendKey : .none
-        let savedIsDefault = outputMode == .respond ? false : isDefault
+        let savedIsDefault = outputMode == .respond || outputMode == .show ? false : isDefault
         let savedCustomCommand = makeCustomCommand()
 
         switch mode {

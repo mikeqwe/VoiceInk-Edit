@@ -90,6 +90,7 @@ final class SuggestController {
             notify("Suggest: finish the recording first. Nothing was changed.")
             return
         }
+        ExplainController.shared.dismiss(reason: "suggest-opened")
         session = SuggestCore.Session()
         asked = nil
         startKeys()
@@ -437,6 +438,14 @@ final class SuggestController {
         NotificationManager.shared.showNotification(title: title, type: .warning)
     }
 
+    /// Fork F13: the Explain panel takes over; the list closes without a notice and pastes nothing.
+    func dismiss(reason: String) {
+        guard session != nil else { return }
+        if case .picked = session?.phase { return }
+        Self.logger.notice("Suggest closed reason=\(reason, privacy: .public)")
+        finish()
+    }
+
     private static func phaseName(_ phase: SuggestCore.Session.Phase) -> String {
         switch phase {
         case .thinking: return "thinking"
@@ -779,6 +788,18 @@ final class SuggestPanelModel: ObservableObject {
     var frames: [SuggestCore.Target: CGRect] = [:]
     /// A click on a row, the esc chip or "more", or VoiceOver's press on one.
     var onClick: ((SuggestCore.Target) -> Void)?
+    /// Fork F13: the Explain / Ask view instead of the list (`ExplainController`): text, never options.
+    @Published var answer: Answer?
+
+    struct Answer: Equatable {
+        let title: String
+        let question: String?
+        /// nil while listening or thinking.
+        let text: String?
+        /// "Listening…" or "Thinking…" while there is no text.
+        let status: String?
+        let footer: String?
+    }
 }
 
 /// Floats over the app and never takes keyboard focus (`SuggestNonActivatingPanel`), so the draft
@@ -936,7 +957,102 @@ struct SuggestPanelView: View {
         return model.pointer.pressed == target ? Self.pressFill : Self.hoverFill
     }
 
+    @ViewBuilder
     private var content: some View {
+        if let answer = model.answer {
+            answerContent(answer)
+        } else {
+            listContent
+        }
+    }
+
+    /// Fork F13: the Explain / Ask view. The same surface, width rule and esc chip as the list; the
+    /// top line names the verb and the selection, then the question (Ask), then the answer as text.
+    private func answerContent(_ answer: SuggestPanelModel.Answer) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                HStack(alignment: .lastTextBaseline, spacing: 5) {
+                    Text(verbatim: answer.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                    if let original = model.original {
+                        Text(verbatim: "· «" + original.replacingOccurrences(of: "\n", with: " ") + "»")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary.opacity(0.85))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(verbatim: answer.title + (model.original.map { " " + $0 } ?? "")))
+                .accessibilityIdentifier("explain-title")
+                Spacer(minLength: 0)
+                SuggestKeyChip(text: "esc", fill: fill(for: .close))
+                    .reportFrame(.close)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Text(verbatim: "Close"))
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { model.onClick?(.close) }
+                    .accessibilityIdentifier("suggest-close")
+            }
+            .padding(.horizontal, Self.edge)
+            .padding(.top, 2)
+            .padding(.bottom, 4)
+            if let question = answer.question {
+                Text(verbatim: "› " + question)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, Self.edge)
+                    .padding(.bottom, 4)
+                    .accessibilityIdentifier("explain-question")
+            }
+            if let text = answer.text {
+                Text(verbatim: text)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.primary)
+                    .lineSpacing(3)
+                    .lineLimit(20)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Self.edge)
+                    .padding(.vertical, 2)
+                    .accessibilityIdentifier("explain-answer")
+                if let footer = answer.footer {
+                    Text(verbatim: footer)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, Self.edge)
+                        .padding(.top, 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(alignment: .top) {
+                            Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+                        }
+                        .padding(.top, 4)
+                        .accessibilityIdentifier("explain-footer")
+                }
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(verbatim: answer.status ?? "Thinking…")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, Self.edge)
+                .padding(.vertical, 4)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(verbatim: answer.status ?? "Thinking"))
+                .accessibilityIdentifier("explain-status")
+            }
+        }
+        .padding(.top, 6)
+        .padding(.bottom, 7)
+    }
+
+    private var listContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             topLine
                 .padding(.horizontal, Self.edge)

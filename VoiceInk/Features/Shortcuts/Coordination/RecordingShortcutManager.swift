@@ -295,6 +295,13 @@ class RecordingShortcutManager: ObservableObject {
                 modelContext: engine.modelContext,
                 isRecorderVisible: recorderUIManager.isRecorderPanelVisible
             )
+        case .explainSelection:
+            ExplainController.shared.explain(
+                modelContext: engine.modelContext,
+                isRecorderVisible: recorderUIManager.isRecorderPanelVisible
+            )
+        case .askAboutSelection:
+            await ExplainController.shared.ask(modelContext: engine.modelContext, recorder: recorderUIManager)
         default:
             break
         }

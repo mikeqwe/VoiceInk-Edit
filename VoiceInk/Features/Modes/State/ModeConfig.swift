@@ -5,12 +5,16 @@ enum ModeOutputMode: String, Codable, CaseIterable {
     case paste
     case respond
     case customCommand
+    /// Fork F13: the transcript is the question of an Ask about the selection; the answer shows in
+    /// Suggest's panel and is never inserted (`ExplainController`).
+    case show
 
     var displayName: String {
         switch self {
         case .paste: return String(localized: "Paste")
         case .respond: return String(localized: "Respond")
         case .customCommand: return String(localized: "Custom Command")
+        case .show: return "Show"
         }
     }
 
@@ -19,11 +23,12 @@ enum ModeOutputMode: String, Codable, CaseIterable {
         case .paste: return "doc.on.clipboard"
         case .respond: return "text.bubble"
         case .customCommand: return "terminal"
+        case .show: return "text.magnifyingglass"
         }
     }
 
     static func choices(canRespond: Bool) -> [ModeOutputMode] {
-        canRespond ? [.paste, .respond, .customCommand] : [.paste, .customCommand]
+        canRespond ? [.paste, .respond, .customCommand, .show] : [.paste, .customCommand, .show]
     }
 }
 

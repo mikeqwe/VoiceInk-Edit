@@ -11,6 +11,10 @@ enum ShortcutAction: Hashable, Sendable {
     case quickAddToDictionary
     /// Fork F2: replacements for the selected word, picked from a numbered list.
     case suggestReplacement
+    /// Fork F13: explain the selected text in Suggest's panel.
+    case explainSelection
+    /// Fork F13: ask about the selected text by voice: once to start the take, once to end it.
+    case askAboutSelection
     case mode(UUID)
     case recorderPanelEscape
     case recorderPanelReturn
@@ -51,6 +55,10 @@ enum ShortcutAction: Hashable, Sendable {
             return "quickAddToDictionary"
         case .suggestReplacement:
             return "suggestReplacement"
+        case .explainSelection:
+            return "explainSelection"
+        case .askAboutSelection:
+            return "askAboutSelection"
         case .mode(let id):
             return "mode_\(id.uuidString)"
         case .recorderPanelEscape:
@@ -84,6 +92,10 @@ enum ShortcutAction: Hashable, Sendable {
             return String(localized: "Quick Add to Dictionary")
         case .suggestReplacement:
             return "Suggest Replacement"
+        case .explainSelection:
+            return "Explain Selection"
+        case .askAboutSelection:
+            return "Ask About Selection"
         case .mode(let id):
             if let config = ModeManager.shared.getConfiguration(with: id) {
                 return String(format: String(localized: "%@ Mode"), config.name)
@@ -112,6 +124,8 @@ enum ShortcutAction: Hashable, Sendable {
         .openQuickHistory,
         .quickAddToDictionary,
         .suggestReplacement,
+        .explainSelection,
+        .askAboutSelection,
     ]
 
     static let recorderPanelStoredActions: [Self] = [
