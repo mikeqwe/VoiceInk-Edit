@@ -92,8 +92,11 @@ final class ExplainController {
         open(kind: .ask, keepEarlier: followUp)
         let current = run
         Self.logger.notice("Ask take start mode=\(mode.id.uuidString, privacy: .public) followUp=\(followUp, privacy: .public) earlier=\(self.earlier.count, privacy: .public)")
+        var started = false
         listenWatch = recorder.recordingStatePublisher?.sink { [weak self] state in
-            guard state == .idle else { return }
+            // The publisher replays the state at subscription (idle, before the take starts): only an idle that
+            // follows this take's own start ends it.
+            guard ExplainCore.takeEnded(by: state == .idle, started: &started) else { return }
             Task { @MainActor in
                 // The transcript is delivered before the recorder goes idle; a take that ends with
                 // none (cancelled, too short, empty) leaves the panel listening.

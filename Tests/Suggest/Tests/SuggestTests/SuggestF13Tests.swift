@@ -104,6 +104,15 @@ final class SuggestF13Tests: XCTestCase {
         XCTAssertEqual(ask.answer, "Ответ.")
     }
 
+    /// Live 22.11 18:11: the replayed idle at subscription closed the Ask panel 1 s into the take.
+    func testTheReplayedIdleBeforeTheTakeDoesNotEndIt() {
+        var started = false
+        XCTAssertFalse(ExplainCore.takeEnded(by: true, started: &started), "the idle replayed at subscription")
+        XCTAssertFalse(ExplainCore.takeEnded(by: false, started: &started), "starting")
+        XCTAssertFalse(ExplainCore.takeEnded(by: false, started: &started), "recording")
+        XCTAssertTrue(ExplainCore.takeEnded(by: true, started: &started), "idle after the take: ended")
+    }
+
     func testDigitOneCopiesEscClosesOtherDigitsAreConsumed() {
         XCTAssertEqual(ExplainCore.key(for: .pick(1)), .copy)
         XCTAssertEqual(ExplainCore.key(for: .pick(2)), .ignored)

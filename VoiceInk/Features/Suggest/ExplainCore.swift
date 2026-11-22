@@ -119,6 +119,13 @@ enum ExplainCore {
         }
     }
 
+    /// Whether a recorder state seen while the question is recorded ends the take: only an idle state after a
+    /// non-idle one. The state publisher replays its current value (idle) when the watch starts, before the take.
+    static func takeEnded(by idle: Bool, started: inout Bool) -> Bool {
+        if !idle { started = true; return false }
+        return started
+    }
+
     /// Whether a key the app receives closes the panel (`ExplainController`'s outside watch). As for Suggest's list,
     /// a key that changes the text; and also ⏎ (Return or keypad Enter), which still reaches the app: once he
     /// sends or breaks the line the answer is about text that has moved on. The panel's own keys are not text changes (`SuggestCore.changesText`).
