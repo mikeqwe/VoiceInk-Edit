@@ -166,10 +166,11 @@ enum ExplainCore {
         case .explain:
             return """
                 The user selected some text, given as SELECTION, and wants to know what it means. Answer \
-                in Russian. Lead with the meaning, in one to three short sentences: what it means, then \
-                what it means here, in this text. For code, a command or an identifier, say what it does, \
-                in two to four sentences. For a longer passage, its point in plain words. Explain the \
-                SELECTION only: never explain other terms from the text around it.
+                in Russian, as one paragraph of at most three short sentences (at most four for code, a \
+                command or an identifier): first what the SELECTION means, then what it means in this \
+                text. For a longer passage, its point in plain words. Keep to the SELECTION: do not \
+                explain, define or comment on any other word, name or acronym from the text, even an \
+                unclear one; name another word only when the SELECTION's meaning here depends on it.
 
                 \(sharedRules)
                 """
