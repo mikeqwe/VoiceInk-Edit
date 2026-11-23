@@ -22,7 +22,7 @@ final class SuggestF16Tests: XCTestCase {
     // MARK: - His values: the prompts as before
 
     /// SuggestCore.systemPrompt as it was at 58dcbcd5 (F15), copied verbatim (F17: with its count, 7, written out).
-    private let suggestPromptBeforeF16 = """
+    static let suggestPromptBeforeF16 = """
         The user selected some text, given as SELECTION: a word, a phrase or a few lines. The \
         selected text is not right here. The user wants something else in its place, even when the \
         SELECTION is a correctly spelled word. Return exactly 7 replacements \
@@ -84,8 +84,8 @@ final class SuggestF16Tests: XCTestCase {
 
     func testHisWritingLanguageGivesTheSuggestPromptAsBefore() {
         // F17 adds the opposite-reading rule and field; nothing else of his prompt changes.
-        XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru"), SuggestF17Tests.withF17(suggestPromptBeforeF16))
-        XCTAssertTrue(suggestPromptBeforeF16.contains("The user writes Russian and English"), "the copy is the old prompt")
+        XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru"), SuggestF17Tests.withF17(Self.suggestPromptBeforeF16))
+        XCTAssertTrue(Self.suggestPromptBeforeF16.contains("The user writes Russian and English"), "the copy is the old prompt")
     }
 
     func testHisExplainLanguageGivesTheExplainPromptAsBefore() {
@@ -133,8 +133,8 @@ final class SuggestF16Tests: XCTestCase {
         XCTAssertTrue(prompt.contains("a word or phrase that sounds like the SELECTION and fits the text better; a different word or wording"), prompt)
         XCTAssertTrue(prompt.contains("only that.\n- When the SELECTION says whether something is, can, must"), prompt) // F17's rule follows
         XCTAssertTrue(prompt.contains("invent none.\n- Prefer replacements that make sense in the text"), prompt)
-        XCTAssertTrue(prompt.contains("Return 5 to 9 replacements")) // F17: was exactly 7
-        XCTAssertTrue(prompt.hasSuffix("then \"replacements\" with 5 to 9 distinct items."), prompt)
+        XCTAssertTrue(prompt.contains("Return exactly 9 replacements")) // F17: was 7; the setting's default
+        XCTAssertTrue(prompt.hasSuffix("then \"replacements\" with exactly 9 distinct items."), prompt)
     }
 
     // MARK: - The settings

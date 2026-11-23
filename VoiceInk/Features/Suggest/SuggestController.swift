@@ -39,6 +39,8 @@ final class SuggestController {
         let vocabulary: [String]
         /// Fork F16: the language the user writes besides English, nil for English only.
         let writingLanguage: String?
+        /// Fork F17: how many replacements to ask for and show (`SuggestCore.replacementCount`).
+        let count: Int
     }
 
     /// Suggest waits at least this long for the model. The whole field text can be tens of
@@ -263,15 +265,17 @@ final class SuggestController {
         session?.rawSelectionRead(context.around?.selected)
         let vocabulary = CustomVocabularyService.shared.loadSavedVocabulary(from: modelContext)
         let writingLanguage = SuggestLanguage.writingLanguage()
+        let count = SuggestCore.replacementCount()
         let request = Request(
             selection: selection,
             context: context,
-            systemPrompt: [SuggestCore.systemPrompt(writingLanguage: writingLanguage), vocabulary.enhancementSection]
+            systemPrompt: [SuggestCore.systemPrompt(writingLanguage: writingLanguage, count: count), vocabulary.enhancementSection]
                 .filter { !$0.isEmpty }.joined(separator: "\n\n"),
             provider: target.provider,
             model: target.model,
             vocabulary: vocabulary.terms,
-            writingLanguage: writingLanguage
+            writingLanguage: writingLanguage,
+            count: count
         )
         asked = request
         await ask(request, rejected: [])
@@ -286,7 +290,7 @@ final class SuggestController {
         let otherChars = context.other.reduce(0) { $0 + $1.utf16.count }
         let screenChars = context.screen?.utf16.count ?? 0
         let effort = EditingModelEffort.current(EditingModelEffort.suggest)
-        Self.logger.notice("Suggest request provider=\(request.provider.rawValue, privacy: .public) model=\(request.model ?? "default", privacy: .public) selectionChars=\(request.selection.count, privacy: .public) context=\(context.around != nil, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) otherChars=\(otherChars, privacy: .public) screenChars=\(screenChars, privacy: .public) effort=\(request.provider == .anthropic ? effort.effort.logValue(model: request.model ?? "default", invalid: effort.invalid) : "n/a", privacy: .public) rejected=\(rejected.count, privacy: .public) writingLanguage=\(request.writingLanguage ?? "en-only", privacy: .public)")
+        Self.logger.notice("Suggest request provider=\(request.provider.rawValue, privacy: .public) model=\(request.model ?? "default", privacy: .public) selectionChars=\(request.selection.count, privacy: .public) context=\(context.around != nil, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) otherChars=\(otherChars, privacy: .public) screenChars=\(screenChars, privacy: .public) effort=\(request.provider == .anthropic ? effort.effort.logValue(model: request.model ?? "default", invalid: effort.invalid) : "n/a", privacy: .public) rejected=\(rejected.count, privacy: .public) writingLanguage=\(request.writingLanguage ?? "en-only", privacy: .public) count=\(request.count, privacy: .public)")
         let started = Date()
         do {
             let completion = try await aiService.performChatCompletion(
@@ -303,7 +307,8 @@ final class SuggestController {
             let spelling = SuggestCore.Spelling(
                 isWord: { SuggestSpelling.isWord($0, writingLanguage: request.writingLanguage) }, vocabulary: request.vocabulary)
             let answer = SuggestCore.answer(
-                fromModelOutput: completion.text, original: request.selection, excluding: rejected, spelling: spelling)
+                fromModelOutput: completion.text, original: request.selection, excluding: rejected, spelling: spelling,
+                limit: request.count)
             let items = answer.items
             let answered = SuggestCore.answerItemCount(completion.text).map(String.init)
                 ?? "not-json shape=\(SuggestCore.unparsedShape(completion.text))"

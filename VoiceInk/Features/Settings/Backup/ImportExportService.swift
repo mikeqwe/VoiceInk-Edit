@@ -205,7 +205,8 @@ class ImportExportService {
             voiceMark: VoiceMark.storedDefaultMark().mark,
             voiceMarkApps: VoiceMark.appMarks().marks,
             explainAnswerLanguage: UserDefaults.standard.string(forKey: SuggestLanguage.explainDefaultsKey),
-            suggestWritingLanguage: UserDefaults.standard.string(forKey: SuggestLanguage.writingDefaultsKey)
+            suggestWritingLanguage: UserDefaults.standard.string(forKey: SuggestLanguage.writingDefaultsKey),
+            suggestReplacementCount: UserDefaults.standard.object(forKey: SuggestCore.replacementCountDefaultsKey) as? Int
         )
 
         let exportedSettings = BackupFile(

@@ -323,9 +323,9 @@ final class SuggestTests: XCTestCase {
         // punctuation (was: always allowed, which gave "tomorrow", "Tomorrow", "tomorrow.").
         XCTAssertTrue(prompt.contains("when the SELECTION's own error is its letter case or punctuation"), prompt)
         XCTAssertFalse(prompt.contains("differs from the SELECTION only in letter case is allowed"))
-        // F8 asked for 7 so that 5 remained after the local filters; F17 asks for 5 to 9.
-        XCTAssertTrue(prompt.contains("Return 5 to 9 replacements"))
-        XCTAssertTrue(prompt.contains("with 5 to 9 distinct items"), prompt)
+        // F8 asked for 7 so that 5 remained after the local filters; F17 asks for the setting's count, 9 by default.
+        XCTAssertTrue(prompt.contains("Return exactly 9 replacements"))
+        XCTAssertTrue(prompt.contains("with exactly 9 distinct items"), prompt)
         XCTAssertTrue(prompt.contains("OTHER_TEXT, when present, is other text visible in the same window; may be unrelated."))
         XCTAssertTrue(prompt.contains("REJECTED, when present, lists replacements already offered"))
         XCTAssertTrue(prompt.contains("a word, a phrase or a few lines"))
@@ -513,13 +513,13 @@ final class SuggestTests: XCTestCase {
         // A composer line 150 pt above the screen's bottom (the owner's Slack at 13:34:48).
         let composer = CGRect(x: 400, y: 150, width: 60, height: 18)
         let thinking = CGSize(width: 200, height: 60)
-        let options = CGSize(width: 200, height: SuggestCore.plannedListHeight)
+        let options = CGSize(width: 200, height: SuggestCore.plannedListHeight(rows: SuggestCore.maxReplacements))
         XCTAssertEqual(SuggestCore.panelOrigin(size: thinking, anchor: composer, visible: visible).side, .below,
                        "before F6: Thinking… fits below…")
         XCTAssertEqual(SuggestCore.panelOrigin(size: options, anchor: composer, visible: visible).side, .above,
                        "…and the list then jumped above")
         // F6: the run takes the side a full list needs, and both sizes stay there, on one bottom edge.
-        let side = SuggestCore.runSide(size: thinking, anchor: composer, visible: visible)
+        let side = SuggestCore.runSide(size: thinking, anchor: composer, visible: visible, rows: SuggestCore.maxReplacements)
         XCTAssertEqual(side, .above)
         let first = SuggestCore.panelOrigin(size: thinking, anchor: composer, visible: visible, keeping: side)
         let second = SuggestCore.panelOrigin(size: options, anchor: composer, visible: visible, keeping: side)
@@ -529,7 +529,7 @@ final class SuggestTests: XCTestCase {
         XCTAssertEqual(second.origin.y, first.origin.y, "the list grows up from the same edge")
         // With room for a full list below, it opens and stays below.
         let middle = CGRect(x: 400, y: 600, width: 60, height: 18)
-        let belowSide = SuggestCore.runSide(size: thinking, anchor: middle, visible: visible)
+        let belowSide = SuggestCore.runSide(size: thinking, anchor: middle, visible: visible, rows: SuggestCore.maxReplacements)
         XCTAssertEqual(belowSide, .below)
         XCTAssertEqual(SuggestCore.panelOrigin(size: options, anchor: middle, visible: visible, keeping: belowSide).side, .below)
         // Only a list too tall for the kept side moves: there is no room above a line at the top.

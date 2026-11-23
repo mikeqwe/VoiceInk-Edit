@@ -11,14 +11,25 @@ import Foundation
 /// the I/O. Fork F4: where the list opens, and what each option changes. Foundation and
 /// CoreGraphics geometry only: `Tests/Suggest` runs it with `swift test`.
 enum SuggestCore {
-    /// Fork F17: up to nine (was five; the owner, 23.11: different cases do not fit in five). The
-    /// prompt asks for `minReplacements` to nine, most likely first: more than five only while they are
-    /// plausible. "Up to nine, no padding" was tried first and shipped shorter lists than before (fewer
-    /// than five in 37 of 86 live lists), against the reason for nine.
+    /// Fork F17: the most a list shows (was five; the owner, 23.11: different cases do not fit in five).
+    /// Keys 1–9 pick them. A run asks for `replacementCount` of them.
     static let maxReplacements = 9
 
-    /// Fork F17: the floor the prompt asks for, with F16's rule to fill it with other fitting wordings.
-    static let minReplacements = 5
+    /// Fork F17: how many replacements a run asks for and shows: Settings → Suggest → Number of
+    /// Replacements, 3 to 9, nine by default (the owner, 23.11: «9 вариантов всегда… или кастомизировать
+    /// количество… в настройках»). The prompt asks for exactly that many, with F16's rule to fill them
+    /// with other fitting wordings. "Up to nine, fewer when fewer fit" was tried first and gave fewer
+    /// than five in 37 of 86 live lists.
+    static let replacementCountDefaultsKey = "suggestReplacementCount"
+    static let replacementCounts = 3...maxReplacements
+    static let defaultReplacementCount = 9
+
+    /// The stored count when it is one of `replacementCounts`; otherwise (unset, or a value written
+    /// outside the app) the default.
+    static func replacementCount(in defaults: UserDefaults = .standard) -> Int {
+        let stored = defaults.object(forKey: replacementCountDefaultsKey) as? Int
+        return stored.flatMap { replacementCounts.contains($0) ? $0 : nil } ?? defaultReplacementCount
+    }
 
     /// The longest selection Suggest takes, in characters. Every replacement repeats the
     /// whole selection, so nine of them are up to nine times this long, and the list shows
@@ -43,9 +54,10 @@ enum SuggestCore {
     /// `maxReplacements` remain, in the model's order. Fork F17: the answer's opposite reading
     /// stays among them (`Answer`).
     static func replacements(
-        fromModelOutput output: String, original: String, excluding shown: [String] = [], spelling: Spelling? = nil
+        fromModelOutput output: String, original: String, excluding shown: [String] = [], spelling: Spelling? = nil,
+        limit: Int = maxReplacements
     ) -> [String] {
-        answer(fromModelOutput: output, original: original, excluding: shown, spelling: spelling).items
+        answer(fromModelOutput: output, original: original, excluding: shown, spelling: spelling, limit: limit).items
     }
 
     /// Fork F17: the list to show, and what became of the answer's "opposite": the SELECTION with its
@@ -71,9 +83,12 @@ enum SuggestCore {
         case dropped
     }
 
+    /// `limit`: the most the list shows, the run's `replacementCount` (at most `maxReplacements`).
     static func answer(
-        fromModelOutput output: String, original: String, excluding shown: [String] = [], spelling: Spelling? = nil
+        fromModelOutput output: String, original: String, excluding shown: [String] = [], spelling: Spelling? = nil,
+        limit: Int = maxReplacements
     ) -> Answer {
+        let limit = min(max(limit, 1), maxReplacements)
         guard let parsed = jsonAnswer(in: output) else { return Answer(items: [], opposite: .none) }
         let originalText = original.trimmingCharacters(in: .whitespacesAndNewlines)
         let shownKeys = Set(shown.map(variantKey))
@@ -88,7 +103,7 @@ enum SuggestCore {
             let text = item.trimmingCharacters(in: .whitespacesAndNewlines)
             guard usable(text), seen.insert(variantKey(text)).inserted else { continue }
             result.append(text)
-            if result.count == maxReplacements { break }
+            if result.count == limit { break }
         }
         guard let opposite = parsed.opposite?.trimmingCharacters(in: .whitespacesAndNewlines), !opposite.isEmpty else {
             return Answer(items: result, opposite: .none)
@@ -97,7 +112,7 @@ enum SuggestCore {
         if result.contains(where: { variantKey($0) == key }) { return Answer(items: result, opposite: .ranked) }
         if shownKeys.contains(key) { return Answer(items: result, opposite: .shownBefore) }
         guard usable(opposite) else { return Answer(items: result, opposite: .dropped) }
-        if result.count == maxReplacements { result.removeLast() }
+        if result.count == limit { result.removeLast() }
         result.append(opposite)
         return Answer(items: result, opposite: .added)
     }
@@ -626,7 +641,9 @@ enum SuggestCore {
     /// `impl/voiceink/evidence/f5/final/result.txt`), 27 pt a row; F17's nine take 297. A run picks
     /// its side for a list this tall (`runSide`), so "Thinking…" does not open below only to jump
     /// above when the options arrive.
-    static let plannedListHeight: CGFloat = listChromeHeight + CGFloat(maxReplacements) * optionRowHeight
+    static func plannedListHeight(rows: Int) -> CGFloat {
+        listChromeHeight + CGFloat(rows) * optionRowHeight
+    }
 
     // MARK: - Fitting nine beside the selection (F17)
 
@@ -655,10 +672,11 @@ enum SuggestCore {
         return current - 1
     }
 
-    /// The side a run takes when it first shows: where a list at least `plannedListHeight` tall
+    /// The side a run takes when it first shows: where a list of `rows` one-line options
+    /// (`plannedListHeight`) would go. The run asks for `replacementCount` rows.
     /// would go. Later placements keep it (`panelOrigin(…keeping:)`).
-    static func runSide(size: CGSize, anchor: CGRect?, visible: CGRect) -> PanelSide {
-        let planned = CGSize(width: size.width, height: max(size.height, plannedListHeight))
+    static func runSide(size: CGSize, anchor: CGRect?, visible: CGRect, rows: Int = replacementCount()) -> PanelSide {
+        let planned = CGSize(width: size.width, height: max(size.height, plannedListHeight(rows: rows)))
         return panelOrigin(size: planned, anchor: anchor, visible: visible).side
     }
 
@@ -1068,7 +1086,8 @@ enum SuggestCore {
     /// Fork F16: the Suggest prompt for the language the user writes besides English
     /// (`SuggestLanguage.writingLanguage`), or for English only (nil). With "ru" it is the prompt as it was
     /// before the setting, examples included.
-    static func systemPrompt(writingLanguage: String?) -> String {
+    /// Fork F17: `count`, the replacements to ask for (`replacementCount`).
+    static func systemPrompt(writingLanguage: String?, count: Int = defaultReplacementCount) -> String {
         let writes = writingLanguage.map(OutputLanguage.englishName)
         let originalOption = writes.map { "the English original of a term written in \($0) letters (see below); " } ?? ""
         let writingRule = writes.map { name in
@@ -1085,10 +1104,9 @@ enum SuggestCore {
         return """
         The user selected some text, given as SELECTION: a word, a phrase or a few lines. The \
         selected text is not right here. The user wants something else in its place, even when the \
-        SELECTION is a correctly spelled word. Return \(minReplacements) to \(maxReplacements) \
-        replacements for the whole SELECTION, most likely first: at least \(minReplacements), and \
-        more, up to \(maxReplacements), while more of them are things the user may have meant. Each \
-        replacement must fit the text in place of the SELECTION.
+        SELECTION is a correctly spelled word. Return exactly \(count) replacements \
+        for the whole SELECTION, most likely first. Each replacement must fit the text in place of \
+        the SELECTION.
 
         Rules for the replacements:
         - Each one is something the user may have meant instead: a word or phrase that sounds like \
@@ -1110,8 +1128,8 @@ enum SuggestCore {
         of them. The one exception: when the SELECTION's own error is its letter case or \
         punctuation, one replacement may fix only that.
         \(oppositeRule(writingLanguage: writingLanguage))\(writingRule)- Prefer replacements that make sense in the text over words that only sound alike.
-        - When fewer than \(minReplacements) such replacements exist, add other words or wordings \
-        that fit the text and keep its meaning.
+        - When fewer such replacements exist, add other words or wordings that fit the text and \
+        keep its meaning.
 
         Never return the SELECTION unchanged. TEXT_BEFORE and TEXT_AFTER, when present, are the \
         text around the SELECTION. OTHER_TEXT, when present, is \(otherTextNote). SCREEN_TEXT, when \
@@ -1121,8 +1139,8 @@ enum SuggestCore {
         JSON only, with no other text, even when the SELECTION looks right: \
         {"meaning": "...", "opposite": "..." or null, "replacements": ["...", "..."]}: first "meaning", \
         a few words on what the text says at the SELECTION's place and who says it to whom, then \
-        "opposite", the opposite reading or null, then "replacements" with \(minReplacements) to \
-        \(maxReplacements) distinct items.
+        "opposite", the opposite reading or null, then "replacements" with exactly \(count) distinct \
+        items.
         """
     }
 

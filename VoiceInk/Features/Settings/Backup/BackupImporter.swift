@@ -274,6 +274,13 @@ enum BackupImporter {
                 print("Skipped \(key) \"\(language)\": not a language code.")
             }
         }
+        if let count = general.suggestReplacementCount {
+            if SuggestCore.replacementCounts.contains(count) {
+                UserDefaults.standard.set(count, forKey: SuggestCore.replacementCountDefaultsKey)
+            } else {
+                print("Skipped \(SuggestCore.replacementCountDefaultsKey) \(count): not 3 to 9.")
+            }
+        }
         if let usesScreenText = general.suggestUsesScreenText {
             UserDefaults.standard.set(usesScreenText, forKey: SuggestCore.screenTextDefaultsKey)
         }

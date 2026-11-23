@@ -11,6 +11,7 @@ struct SuggestSettingsSection: View {
     @State private var keepOnApps = WebAccessibilityKeepOn.bundleIdentifiers()
     @AppStorage(SuggestLanguage.explainDefaultsKey) private var explainLanguage = SuggestLanguage.defaultExplainLanguage()
     @AppStorage(SuggestLanguage.writingDefaultsKey) private var writingLanguage = SuggestLanguage.defaultWritingLanguage()
+    @AppStorage(SuggestCore.replacementCountDefaultsKey) private var replacementCount = SuggestCore.defaultReplacementCount
     private let layoutLanguages = OutputLanguageMonitor.enabledLayoutLanguages()
 
     var body: some View {
@@ -21,7 +22,7 @@ struct SuggestSettingsSection: View {
             } label: {
                 HStack(spacing: 4) {
                     Text("Suggest Replacement")
-                    InfoTip("Select a word or a phrase in any app and press this shortcut. VoiceInk lists up to nine replacements: press 1–9 or click one to paste it, or Esc to close. Press the shortcut again for a new set.")
+                    InfoTip("Select a word or a phrase in any app and press this shortcut. VoiceInk lists the replacements (Number of Replacements below): press 1–9 or click one to paste it, or Esc to close. Press the shortcut again for a new set.")
                 }
             }
 
@@ -53,6 +54,17 @@ struct SuggestSettingsSection: View {
                 HStack(spacing: 4) {
                     Text("Explain In")
                     InfoTip("The language Explain Selection answers in. Terms, names and code stay as written. Ask About Selection answers in the language of the question. The default is the Mac's first preferred language.")
+                }
+            }
+
+            Picker(selection: $replacementCount) {
+                ForEach(Array(SuggestCore.replacementCounts), id: \.self) { count in
+                    Text("\(count)").tag(count)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Number of Replacements")
+                    InfoTip("How many replacements Suggest lists, most likely first; keys 1–9 pick them. When fewer likely ones exist, the rest are other wordings that fit the text. When the selection can be read the other way round (with a negation added or removed), one of them is that reading. More replacements take a little longer to arrive. The default is 9.")
                 }
             }
 

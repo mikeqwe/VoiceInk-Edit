@@ -119,6 +119,7 @@ struct GeneralBackup: Codable {
     let voiceMarkApps: [String: String]?
     let explainAnswerLanguage: String?
     let suggestWritingLanguage: String?
+    let suggestReplacementCount: Int?
 }
 
 struct WordBackup: Codable {
