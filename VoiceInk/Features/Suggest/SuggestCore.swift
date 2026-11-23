@@ -679,6 +679,14 @@ enum SuggestCore {
         case below, above, fallback
     }
 
+    /// Fork F19: whether the panel's window must be sized again to its content. The owner saw a clipped square on a
+    /// selection of several words (23.11): the panel opened at 200 pt before the selection was read, the top line
+    /// then needed up to 460 pt, and nothing sized the window again until the list came, so "Thinking…" showed cut on
+    /// both sides. The panel now checks this after every layout of its content (`SuggestPanel`), whatever changed it:
+    /// any difference of half a point or more, wider or narrower, taller or shorter.
+    static func panelNeedsRefit(content: CGSize, window: CGSize) -> Bool {
+        abs(content.width - window.width) >= 0.5 || abs(content.height - window.height) >= 0.5
+    }
 
     /// Space between the selected text and the list.
     static let panelGap: CGFloat = 4

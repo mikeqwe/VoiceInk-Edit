@@ -834,7 +834,9 @@ final class SuggestPanelModel: ObservableObject {
 @MainActor
 final class SuggestPanel: SuggestNonActivatingPanel {
     private let model: SuggestPanelModel
-    private let hostingView: NSHostingView<SuggestPanelView>
+    private let hostingView: SuggestHostingView
+    /// Fork F19: a refit is already queued for the next turn of the main loop.
+    private var refitQueued = false
     private let pointerView = SuggestPointerView()
     /// The selected text's rectangle in Accessibility coordinates, when it was read in time.
     private var anchor: CGRect?
@@ -848,7 +850,7 @@ final class SuggestPanel: SuggestNonActivatingPanel {
 
     init(model: SuggestPanelModel) {
         self.model = model
-        hostingView = NSHostingView(rootView: SuggestPanelView(model: model))
+        hostingView = SuggestHostingView(rootView: SuggestPanelView(model: model))
         super.init(contentRect: NSRect(x: 0, y: 0, width: 320, height: 120))
         appearance = nil  // follows VoiceInk's appearance, as the AutoLearn panel does
         let container = NSView()
@@ -860,7 +862,25 @@ final class SuggestPanel: SuggestNonActivatingPanel {
         hostingView.frame = container.bounds
         pointerView.frame = container.bounds
         pointerView.onEvent = { [weak self] event in self?.pointer(event) }
+        hostingView.onLayout = { [weak self] in self?.queueRefit() }
         setAccessibilityIdentifier("voiceink-suggest-panel")
+    }
+
+    /// Fork F19: after any layout of the content, a shown panel whose window no longer matches its content is sized
+    /// and placed again (`SuggestCore.panelNeedsRefit`), whatever changed the content: the selection read after the
+    /// panel showed, a list, a new set, an answer, a smaller line limit. Queued once per turn of the main loop, so a
+    /// refit's own layout does not recurse.
+    private func queueRefit() {
+        guard !refitQueued else { return }
+        refitQueued = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            refitQueued = false
+            guard isVisible, let content = contentView else { return }
+            hostingView.layoutSubtreeIfNeeded()
+            guard SuggestCore.panelNeedsRefit(content: hostingView.fittingSize, window: content.bounds.size) else { return }
+            fitToContent()
+        }
     }
 
     func setAnchor(_ accessibilityRect: CGRect?, centre: CGRect? = nil) {
@@ -1300,6 +1320,17 @@ private extension View {
 /// Takes its content's one-line (ideal) width, kept within `minWidth…maxWidth`, then the height the
 /// content needs at that width. So a short list is as narrow as its longest line, and a long option
 /// wraps at `maxWidth` with the panel tall enough for every line.
+/// Fork F19: the panel's hosting view, which reports each layout of its content so the panel can size its window
+/// again (`SuggestPanel.queueRefit`).
+final class SuggestHostingView: NSHostingView<SuggestPanelView> {
+    var onLayout: (() -> Void)?
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+}
+
 private struct SuggestWidthLayout: Layout {
     let minWidth: CGFloat
     let maxWidth: CGFloat
