@@ -92,8 +92,17 @@ enum SuggestCore {
         fromModelOutput output: String, original: String, excluding shown: [String] = [], spelling: Spelling? = nil,
         limit: Int = maxReplacements, stemWords: [String] = []
     ) -> Answer {
-        let model = modelAnswer(fromModelOutput: output, original: original, excluding: shown, spelling: spelling, limit: limit)
-        guard !stemWords.isEmpty, jsonAnswer(in: output) != nil else { return model.answer }
+        answer(from: reply(in: output), original: original, excluding: shown, spelling: spelling, limit: limit,
+               stemWords: stemWords)
+    }
+
+    /// `answer(fromModelOutput:)` on a reply already parsed (`reply(in:)`): nil when the answer is not the list.
+    static func answer(
+        from reply: Reply?, original: String, excluding shown: [String] = [], spelling: Spelling? = nil,
+        limit: Int = maxReplacements, stemWords: [String] = []
+    ) -> Answer {
+        let model = modelAnswer(from: reply, original: original, excluding: shown, spelling: spelling, limit: limit)
+        guard !stemWords.isEmpty, reply != nil else { return model.answer }
         return withStemWords(stemWords, in: model.answer, opposite: model.opposite, original: original, excluding: shown,
                              limit: limit)
     }
@@ -131,10 +140,10 @@ enum SuggestCore {
 
     /// The model's list and its opposite reading's text when the list holds it (`ranked` or `added`).
     private static func modelAnswer(
-        fromModelOutput output: String, original: String, excluding shown: [String], spelling: Spelling?, limit: Int
+        from reply: Reply?, original: String, excluding shown: [String], spelling: Spelling?, limit: Int
     ) -> (answer: Answer, opposite: String?) {
         let limit = min(max(limit, 1), maxReplacements)
-        guard let parsed = jsonAnswer(in: output) else { return (Answer(items: [], opposite: .none), nil) }
+        guard let parsed = reply else { return (Answer(items: [], opposite: .none), nil) }
         let originalText = original.trimmingCharacters(in: .whitespacesAndNewlines)
         let shownKeys = Set(shown.map(variantKey))
         let usable = { (text: String) -> Bool in
@@ -190,8 +199,12 @@ enum SuggestCore {
 
     /// For the log: how many of the answer's items the misspelling guard drops.
     static func misspellingCount(inModelOutput output: String, original: String, spelling: Spelling) -> Int {
+        misspellingCount(in: reply(in: output), original: original, spelling: spelling)
+    }
+
+    static func misspellingCount(in reply: Reply?, original: String, spelling: Spelling) -> Int {
         let originalText = original.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (jsonItems(in: output) ?? []).compactMap(itemText)
+        return (reply?.items ?? []).compactMap(itemText)
             .filter { isMisspelling($0.trimmingCharacters(in: .whitespacesAndNewlines), of: originalText, spelling: spelling) }
             .count
     }
@@ -277,8 +290,12 @@ enum SuggestCore {
     /// For the log: the kinds of the answer's items in its order, `-` for a bare string and `?` for an item
     /// `itemText` refuses («repair,plain,?,short»); nil when the answer is not the expected JSON.
     static func itemKinds(inModelOutput output: String) -> String? {
-        jsonItems(in: output).map { items in
-            items.map { item -> String in
+        itemKinds(in: reply(in: output))
+    }
+
+    static func itemKinds(in reply: Reply?) -> String? {
+        reply.map { reply in
+            reply.items.map { item -> String in
                 if item is String { return "-" }
                 guard itemText(item) != nil, let kind = (item as? [String: Any])?["k"] as? String else { return "?" }
                 return kind
@@ -289,7 +306,7 @@ enum SuggestCore {
     /// How many items the model's answer holds before any are dropped; nil when it is not the
     /// expected JSON. For the log: it tells a malformed answer from one whose items were all dropped.
     static func answerItemCount(_ output: String) -> Int? {
-        jsonItems(in: output)?.count
+        reply(in: output)?.items.count
     }
 
     /// What a non-JSON answer looked like, for the log, without its text: `no-brackets` (prose
@@ -300,20 +317,22 @@ enum SuggestCore {
         return jsonValues(in: output).isEmpty ? "unbalanced" : "no-list"
     }
 
+    /// The model's answer, parsed once (`reply(in:)`) for the list and for the log: the list's items as the JSON
+    /// gave them, and, fork F17, the "opposite" of the object that holds the list, when that is a string.
+    struct Reply {
+        let items: [Any]
+        let opposite: String?
+    }
+
     /// Fork F8: the first JSON value in the answer that is the list: an array, or an object with a
     /// "replacements" array. Text, code fences and other bracketed text around it do not matter;
     /// a JSON value that is not the list is skipped whole, so a list nested inside it is not taken.
-    private static func jsonItems(in output: String) -> [Any]? {
-        jsonAnswer(in: output)?.items
-    }
-
-    /// Fork F17: the list as `jsonItems` finds it, with the "opposite" of the object that holds it, when
-    /// that is a string.
-    private static func jsonAnswer(in output: String) -> (items: [Any], opposite: String?)? {
+    /// nil when no value is the list.
+    static func reply(in output: String) -> Reply? {
         for object in jsonValues(in: output) {
-            if let array = object as? [Any] { return (array, nil) }
+            if let array = object as? [Any] { return Reply(items: array, opposite: nil) }
             if let object = object as? [String: Any], let items = object["replacements"] as? [Any] {
-                return (items, object["opposite"] as? String)
+                return Reply(items: items, opposite: object["opposite"] as? String)
             }
         }
         return nil

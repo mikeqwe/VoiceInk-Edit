@@ -315,13 +315,14 @@ final class SuggestController {
             guard isCurrent else { return }
             let spelling = SuggestCore.Spelling(
                 isWord: { SuggestSpelling.isWord($0, writingLanguage: request.writingLanguage) }, vocabulary: request.vocabulary)
+            let reply = SuggestCore.reply(in: completion.text)
             let answer = SuggestCore.answer(
-                fromModelOutput: completion.text, original: request.selection, excluding: rejected, spelling: spelling,
+                from: reply, original: request.selection, excluding: rejected, spelling: spelling,
                 limit: request.count, stemWords: request.spellingHints)
             let items = answer.items
-            let answered = SuggestCore.answerItemCount(completion.text).map(String.init)
+            let answered = reply.map { String($0.items.count) }
                 ?? "not-json shape=\(SuggestCore.unparsedShape(completion.text))"
-            Self.logger.notice("Suggest answer items=\(answered, privacy: .public) kept=\(items.count, privacy: .public) misspelled=\(SuggestCore.misspellingCount(inModelOutput: completion.text, original: request.selection, spelling: spelling), privacy: .public) chars=\(completion.text.count, privacy: .public) opposite=\(answer.opposite.rawValue, privacy: .public) stemWords=\(answer.stemWords, privacy: .public) kinds=\(SuggestCore.itemKinds(inModelOutput: completion.text) ?? "n/a", privacy: .public) attempt=\(attempt, privacy: .public)")
+            Self.logger.notice("Suggest answer items=\(answered, privacy: .public) kept=\(items.count, privacy: .public) misspelled=\(SuggestCore.misspellingCount(in: reply, original: request.selection, spelling: spelling), privacy: .public) chars=\(completion.text.count, privacy: .public) opposite=\(answer.opposite.rawValue, privacy: .public) stemWords=\(answer.stemWords, privacy: .public) kinds=\(SuggestCore.itemKinds(in: reply) ?? "n/a", privacy: .public) attempt=\(attempt, privacy: .public)")
             if items.isEmpty, attempt == 1 {
                 Self.logger.notice("Suggest retry reason=no-usable-option")
                 await ask(request, rejected: rejected, attempt: 2)
