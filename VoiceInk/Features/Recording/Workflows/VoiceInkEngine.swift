@@ -96,6 +96,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
         didSet {
             guard oldValue != recordingState else { return }
             ShortcutDiagnostics.notice("recording-state old=\(oldValue) new=\(recordingState) visible=\(recorderUIManager?.isRecorderPanelVisible ?? false) startID=\(activeRecordingStartID?.uuidString ?? "none")")
+            RecordingStateBroadcast.shared.post(recordingState)
         }
     }
     @Published var shouldCancelRecording = false
@@ -165,6 +166,7 @@ class VoiceInkEngine: NSObject, ObservableObject {
 
         super.init()
 
+        RecordingStateBroadcast.shared.post(recordingState)
         setupNotifications()
         createRecordingsDirectoryIfNeeded()
     }
