@@ -43,6 +43,8 @@ final class SuggestController {
         let count: Int
         /// Fork F18: the spell checker's stem words for a selection it does not know (`SuggestCore.spellingHints`).
         let spellingHints: [String]
+        /// Fork F18: the selection with a sound-alike short word replaced (`SuggestCore.soundsLike`).
+        let soundsLike: String?
     }
 
     /// Suggest waits at least this long for the model. The whole field text can be tens of
@@ -279,7 +281,8 @@ final class SuggestController {
             writingLanguage: writingLanguage,
             count: count,
             spellingHints: SuggestCore.spellingHints(
-                for: selection, candidates: SuggestSpelling.candidates(for: selection, writingLanguage: writingLanguage))
+                for: selection, candidates: SuggestSpelling.candidates(for: selection, writingLanguage: writingLanguage)),
+            soundsLike: SuggestCore.soundsLike(selection, writingLanguage: writingLanguage)
         )
         asked = request
         await ask(request, rejected: [])
@@ -289,13 +292,14 @@ final class SuggestController {
     /// more before the notice; F7 saw 5 such answers in 41.
     private func ask(_ request: Request, rejected: [String], attempt: Int = 1) async {
         let message = SuggestCore.userMessage(
-            selection: request.selection, context: request.context, rejected: rejected, spelling: request.spellingHints)
+            selection: request.selection, context: request.context, rejected: rejected, spelling: request.spellingHints,
+            soundsLike: request.soundsLike)
         let context = request.context
         let aroundChars = context.around.map { $0.before.utf16.count + $0.after.utf16.count } ?? 0
         let otherChars = context.other.reduce(0) { $0 + $1.utf16.count }
         let screenChars = context.screen?.utf16.count ?? 0
         let effort = EditingModelEffort.current(EditingModelEffort.suggest)
-        Self.logger.notice("Suggest request provider=\(request.provider.rawValue, privacy: .public) model=\(request.model ?? "default", privacy: .public) selectionChars=\(request.selection.count, privacy: .public) context=\(context.around != nil, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) otherChars=\(otherChars, privacy: .public) screenChars=\(screenChars, privacy: .public) effort=\(request.provider == .anthropic ? effort.effort.logValue(model: request.model ?? "default", invalid: effort.invalid) : "n/a", privacy: .public) rejected=\(rejected.count, privacy: .public) writingLanguage=\(request.writingLanguage ?? "en-only", privacy: .public) count=\(request.count, privacy: .public) spellingHints=\(request.spellingHints.count, privacy: .public)")
+        Self.logger.notice("Suggest request provider=\(request.provider.rawValue, privacy: .public) model=\(request.model ?? "default", privacy: .public) selectionChars=\(request.selection.count, privacy: .public) context=\(context.around != nil, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) otherChars=\(otherChars, privacy: .public) screenChars=\(screenChars, privacy: .public) effort=\(request.provider == .anthropic ? effort.effort.logValue(model: request.model ?? "default", invalid: effort.invalid) : "n/a", privacy: .public) rejected=\(rejected.count, privacy: .public) writingLanguage=\(request.writingLanguage ?? "en-only", privacy: .public) count=\(request.count, privacy: .public) spellingHints=\(request.spellingHints.count, privacy: .public) soundsLike=\(request.soundsLike != nil, privacy: .public)")
         let started = Date()
         do {
             let completion = try await aiService.performChatCompletion(

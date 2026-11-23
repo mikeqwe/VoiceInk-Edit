@@ -8,7 +8,8 @@ import XCTest
 final class SuggestF18Tests: XCTestCase {
 
     static let spellingSentence = "SPELLING, when present, lists real words a spell checker offers for the "
-        + "SELECTION; may be unrelated. "
+        + "SELECTION; may be unrelated. SOUNDS_LIKE, when present, is the SELECTION with a short word replaced by one "
+        + "that sounds like it; may be unrelated. "
 
     /// An F17 Suggest prompt with exactly F18's change: the SPELLING sentence before the REJECTED one.
     static func withF18(_ before: String) -> String {
