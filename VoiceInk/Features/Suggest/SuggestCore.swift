@@ -12,9 +12,13 @@ import Foundation
 /// CoreGraphics geometry only: `Tests/Suggest` runs it with `swift test`.
 enum SuggestCore {
     /// Fork F17: up to nine (was five; the owner, 23.11: different cases do not fit in five). The
-    /// prompt asks for at most this many, most likely first, and fewer when fewer fit: no padding.
-    /// F8's "ask for seven so five remain" is gone with the padding; the filters may leave fewer.
+    /// prompt asks for `minReplacements` to nine, most likely first: more than five only while they are
+    /// plausible. "Up to nine, no padding" was tried first and shipped shorter lists than before (fewer
+    /// than five in 37 of 86 live lists), against the reason for nine.
     static let maxReplacements = 9
+
+    /// Fork F17: the floor the prompt asks for, with F16's rule to fill it with other fitting wordings.
+    static let minReplacements = 5
 
     /// The longest selection Suggest takes, in characters. Every replacement repeats the
     /// whole selection, so nine of them are up to nine times this long, and the list shows
@@ -1081,9 +1085,10 @@ enum SuggestCore {
         return """
         The user selected some text, given as SELECTION: a word, a phrase or a few lines. The \
         selected text is not right here. The user wants something else in its place, even when the \
-        SELECTION is a correctly spelled word. Return up to \(maxReplacements) replacements for \
-        the whole SELECTION, most likely first: only ones the user may have meant, and fewer when \
-        fewer fit. Each replacement must fit the text in place of the SELECTION.
+        SELECTION is a correctly spelled word. Return \(minReplacements) to \(maxReplacements) \
+        replacements for the whole SELECTION, most likely first: at least \(minReplacements), and \
+        more, up to \(maxReplacements), while more of them are things the user may have meant. Each \
+        replacement must fit the text in place of the SELECTION.
 
         Rules for the replacements:
         - Each one is something the user may have meant instead: a word or phrase that sounds like \
@@ -1105,6 +1110,8 @@ enum SuggestCore {
         of them. The one exception: when the SELECTION's own error is its letter case or \
         punctuation, one replacement may fix only that.
         \(oppositeRule(writingLanguage: writingLanguage))\(writingRule)- Prefer replacements that make sense in the text over words that only sound alike.
+        - When fewer than \(minReplacements) such replacements exist, add other words or wordings \
+        that fit the text and keep its meaning.
 
         Never return the SELECTION unchanged. TEXT_BEFORE and TEXT_AFTER, when present, are the \
         text around the SELECTION. OTHER_TEXT, when present, is \(otherTextNote). SCREEN_TEXT, when \
@@ -1114,7 +1121,7 @@ enum SuggestCore {
         JSON only, with no other text, even when the SELECTION looks right: \
         {"meaning": "...", "opposite": "..." or null, "replacements": ["...", "..."]}: first "meaning", \
         a few words on what the text says at the SELECTION's place and who says it to whom, then \
-        "opposite", the opposite reading or null, then "replacements" with at most \
+        "opposite", the opposite reading or null, then "replacements" with \(minReplacements) to \
         \(maxReplacements) distinct items.
         """
     }

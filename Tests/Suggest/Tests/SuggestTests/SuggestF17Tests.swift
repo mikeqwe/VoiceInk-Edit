@@ -28,7 +28,7 @@ final class SuggestF17Tests: XCTestCase {
     static let formatF17 = """
         {"meaning": "...", "opposite": "..." or null, "replacements": ["...", "..."]}: first "meaning", \
         a few words on what the text says at the SELECTION's place and who says it to whom, then \
-        "opposite", the opposite reading or null, then "replacements" with at most 9 distinct items.
+        "opposite", the opposite reading or null, then "replacements" with 5 to 9 distinct items.
         """
 
     /// F17's text changes to a pre-F17 prompt, besides the rule: the count (up to nine, no padding) and
@@ -36,9 +36,11 @@ final class SuggestF17Tests: XCTestCase {
     static let changes: [(old: String, new: String)] = [
         ("Return exactly 7 replacements for the whole SELECTION, most likely first. Each replacement must fit "
             + "the text in place of the SELECTION.",
-         "Return up to 9 replacements for the whole SELECTION, most likely first: only ones the user may have "
-            + "meant, and fewer when fewer fit. Each replacement must fit the text in place of the SELECTION."),
-        ("- When fewer such replacements exist, add other words or wordings that fit the text and keep its meaning.\n", ""),
+         "Return 5 to 9 replacements for the whole SELECTION, most likely first: at least 5, and more, up to 9, "
+            + "while more of them are things the user may have meant. Each replacement must fit the text in place "
+            + "of the SELECTION."),
+        ("- When fewer such replacements exist, add other words or wordings that fit the text and keep its meaning.",
+         "- When fewer than 5 such replacements exist, add other words or wordings that fit the text and keep its meaning."),
         (#"{"meaning": "...", "replacements": ["...", "..."]}: first "meaning", a few words on what the text says at "#
             + #"the SELECTION's place and who says it to whom, then "replacements" with exactly 7 distinct items."#,
          formatF17),
@@ -64,14 +66,20 @@ final class SuggestF17Tests: XCTestCase {
         // The full equality with F16's verbatim copy is SuggestF16Tests.testHisWritingLanguageGivesTheSuggestPromptAsBefore.
     }
 
-    func testUpToNineAreAskedForWithNoPadding() {
+    /// The owner's reason for nine is that five do not cover his cases, so five stays the floor (F16's, with its
+    /// rule to fill it) and the model goes on to nine while more are plausible. "Up to nine, no padding" gave
+    /// fewer than five in 37 of 86 live lists (F17 report).
+    func testFiveToNineAreAskedForWithFiveAsTheFloor() {
         XCTAssertEqual(SuggestCore.maxReplacements, 9)
+        XCTAssertEqual(SuggestCore.minReplacements, 5)
         for language in ["ru", "de", nil] as [String?] {
             let prompt = SuggestCore.systemPrompt(writingLanguage: language)
-            XCTAssertTrue(prompt.contains("Return up to 9 replacements for the whole SELECTION, most likely first: "
-                + "only ones the user may have meant, and fewer when fewer fit."), prompt)
+            XCTAssertTrue(prompt.contains("Return 5 to 9 replacements for the whole SELECTION, most likely first: "
+                + "at least 5, and more, up to 9, while more of them are things the user may have meant."), prompt)
+            XCTAssertTrue(prompt.contains("- When fewer than 5 such replacements exist, add other words or wordings "
+                + "that fit the text and keep its meaning."), "the floor's rule: \(prompt)")
+            XCTAssertTrue(prompt.hasSuffix("with 5 to 9 distinct items."), prompt)
             XCTAssertFalse(prompt.contains("exactly"), prompt)
-            XCTAssertFalse(prompt.contains("add other words or wordings"), "padding: \(prompt)")
         }
         let twelve = (1...12).map { "option \($0)" }
         let json = String(data: try! JSONSerialization.data(withJSONObject: ["replacements": twelve]), encoding: .utf8)!

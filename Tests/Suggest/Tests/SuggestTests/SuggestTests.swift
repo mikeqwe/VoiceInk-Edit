@@ -323,9 +323,9 @@ final class SuggestTests: XCTestCase {
         // punctuation (was: always allowed, which gave "tomorrow", "Tomorrow", "tomorrow.").
         XCTAssertTrue(prompt.contains("when the SELECTION's own error is its letter case or punctuation"), prompt)
         XCTAssertFalse(prompt.contains("differs from the SELECTION only in letter case is allowed"))
-        // F8 asked for 7 so that 5 remained after the local filters; F17 asks for up to 9, with no padding.
-        XCTAssertTrue(prompt.contains("Return up to 9 replacements"))
-        XCTAssertTrue(prompt.contains("with at most 9 distinct items"), prompt)
+        // F8 asked for 7 so that 5 remained after the local filters; F17 asks for 5 to 9.
+        XCTAssertTrue(prompt.contains("Return 5 to 9 replacements"))
+        XCTAssertTrue(prompt.contains("with 5 to 9 distinct items"), prompt)
         XCTAssertTrue(prompt.contains("OTHER_TEXT, when present, is other text visible in the same window; may be unrelated."))
         XCTAssertTrue(prompt.contains("REJECTED, when present, lists replacements already offered"))
         XCTAssertTrue(prompt.contains("a word, a phrase or a few lines"))

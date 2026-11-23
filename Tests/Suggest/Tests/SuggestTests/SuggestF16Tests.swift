@@ -133,8 +133,8 @@ final class SuggestF16Tests: XCTestCase {
         XCTAssertTrue(prompt.contains("a word or phrase that sounds like the SELECTION and fits the text better; a different word or wording"), prompt)
         XCTAssertTrue(prompt.contains("only that.\n- When the SELECTION says whether something is, can, must"), prompt) // F17's rule follows
         XCTAssertTrue(prompt.contains("invent none.\n- Prefer replacements that make sense in the text"), prompt)
-        XCTAssertTrue(prompt.contains("Return up to 9 replacements")) // F17: was exactly 7
-        XCTAssertTrue(prompt.hasSuffix("then \"replacements\" with at most 9 distinct items."), prompt)
+        XCTAssertTrue(prompt.contains("Return 5 to 9 replacements")) // F17: was exactly 7
+        XCTAssertTrue(prompt.hasSuffix("then \"replacements\" with 5 to 9 distinct items."), prompt)
     }
 
     // MARK: - The settings
