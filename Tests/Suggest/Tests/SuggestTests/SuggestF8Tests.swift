@@ -91,7 +91,8 @@ final class SuggestF8Tests: XCTestCase {
 
     func testThePromptAsksForMeaningFirstAndSaysACorrectWordStillNeedsAlternatives() {
         let prompt = SuggestCore.systemPrompt(writingLanguage: "ru")
-        XCTAssertTrue(prompt.contains(#"{"meaning": "...", "replacements": ["...", "..."]}"#), prompt)
+        // F17 added "opposite" between the two.
+        XCTAssertTrue(prompt.contains(#"{"meaning": "...", "opposite": "..." or null, "replacements": ["...", "..."]}"#), prompt)
         XCTAssertTrue(prompt.contains("even when the SELECTION is a correctly spelled word"), prompt)
         XCTAssertTrue(prompt.contains("even when the SELECTION looks right"), prompt)
         // F10 replaced F8's "Never another form of the SELECTION's own word …" with a bound: at most one

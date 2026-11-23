@@ -83,7 +83,8 @@ final class SuggestF16Tests: XCTestCase {
         """
 
     func testHisWritingLanguageGivesTheSuggestPromptAsBefore() {
-        XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru"), suggestPromptBeforeF16)
+        // F17 adds the opposite-reading rule and field; nothing else of his prompt changes.
+        XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru"), SuggestF17Tests.withF17(suggestPromptBeforeF16))
         XCTAssertTrue(suggestPromptBeforeF16.contains("The user writes Russian and English"), "the copy is the old prompt")
     }
 
@@ -130,7 +131,8 @@ final class SuggestF16Tests: XCTestCase {
         }
         // The two lists still read as before around the dropped parts.
         XCTAssertTrue(prompt.contains("a word or phrase that sounds like the SELECTION and fits the text better; a different word or wording"), prompt)
-        XCTAssertTrue(prompt.contains("only that.\n- Prefer replacements that make sense in the text"), prompt)
+        XCTAssertTrue(prompt.contains("only that.\n- When the SELECTION says whether something is, can, must"), prompt) // F17's rule follows
+        XCTAssertTrue(prompt.contains("invent none.\n- Prefer replacements that make sense in the text"), prompt)
         XCTAssertTrue(prompt.contains("Return exactly 7 replacements"))
         XCTAssertTrue(prompt.hasSuffix("then \"replacements\" with exactly 7 distinct items."), prompt)
     }
