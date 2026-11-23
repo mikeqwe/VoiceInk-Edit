@@ -3,7 +3,9 @@ import XCTest
 
 /// F17: Suggest always offers the opposite reading. Speech recognition drops or adds a negation («недостаточно»
 /// heard as «достаточно»), so the prompt asks for the SELECTION with its negation added or removed, ranked by
-/// likelihood and returned also as "opposite", and the list keeps that item among the shown five.
+/// likelihood and returned also as "opposite", and the list keeps that item among the shown ones.
+/// F17 (scope addition, the owner 23.11): up to nine replacements instead of five, with no padding; keys 1–9;
+/// a list too tall for the side of the selection gets shorter options instead of covering it.
 final class SuggestF17Tests: XCTestCase {
 
     // MARK: - The prompt: F16's, plus the rule and the field
@@ -23,33 +25,93 @@ final class SuggestF17Tests: XCTestCase {
 
         """
 
-    static let formatBeforeF17 = """
-        {"meaning": "...", "replacements": ["...", "..."]}: first "meaning", a few words on what the \
-        text says at the SELECTION's place and who says it to whom, then "replacements" with exactly
-        """
-
     static let formatF17 = """
         {"meaning": "...", "opposite": "..." or null, "replacements": ["...", "..."]}: first "meaning", \
         a few words on what the text says at the SELECTION's place and who says it to whom, then \
-        "opposite", the opposite reading or null, then "replacements" with exactly
+        "opposite", the opposite reading or null, then "replacements" with at most 9 distinct items.
         """
 
-    /// A pre-F17 Suggest prompt with exactly F17's two changes: the rule before the writing-language rule
-    /// (or before "- Prefer" when there is none) and the field in the format. Each anchor must occur once.
+    /// F17's text changes to a pre-F17 prompt, besides the rule: the count (up to nine, no padding) and
+    /// the format. Each old text must occur once.
+    static let changes: [(old: String, new: String)] = [
+        ("Return exactly 7 replacements for the whole SELECTION, most likely first. Each replacement must fit "
+            + "the text in place of the SELECTION.",
+         "Return up to 9 replacements for the whole SELECTION, most likely first: only ones the user may have "
+            + "meant, and fewer when fewer fit. Each replacement must fit the text in place of the SELECTION."),
+        ("- When fewer such replacements exist, add other words or wordings that fit the text and keep its meaning.\n", ""),
+        (#"{"meaning": "...", "replacements": ["...", "..."]}: first "meaning", a few words on what the text says at "#
+            + #"the SELECTION's place and who says it to whom, then "replacements" with exactly 7 distinct items."#,
+         formatF17),
+    ]
+
+    /// A pre-F17 Suggest prompt with exactly F17's changes: the rule before the writing-language rule (or
+    /// before "- Prefer" when there is none), and `changes`.
     static func withF17(_ before: String, rule: String = oppositeRuleRu) -> String {
         let anchor = before.contains("\n- The user writes ") ? "\n- The user writes " : "\n- Prefer replacements"
         precondition(before.components(separatedBy: anchor).count == 2, "rule anchor")
-        precondition(before.components(separatedBy: formatBeforeF17).count == 2, "format anchor")
-        return before
-            .replacingOccurrences(of: anchor, with: "\n" + rule + anchor.dropFirst())
-            .replacingOccurrences(of: formatBeforeF17, with: formatF17)
+        var after = before.replacingOccurrences(of: anchor, with: "\n" + rule + anchor.dropFirst())
+        for change in changes {
+            precondition(after.components(separatedBy: change.old).count == 2, "anchor: \(change.old)")
+            after = after.replacingOccurrences(of: change.old, with: change.new)
+        }
+        return after
     }
 
     func testHisPromptIsF16sWithOnlyTheOppositeRuleAndField() {
         let prompt = SuggestCore.systemPrompt(writingLanguage: "ru")
         XCTAssertTrue(prompt.contains(Self.oppositeRuleRu + "- The user writes Russian and English"), prompt)
-        XCTAssertTrue(prompt.hasSuffix(Self.formatF17 + " 7 distinct items."), prompt)
+        XCTAssertTrue(prompt.hasSuffix(Self.formatF17), prompt)
         // The full equality with F16's verbatim copy is SuggestF16Tests.testHisWritingLanguageGivesTheSuggestPromptAsBefore.
+    }
+
+    func testUpToNineAreAskedForWithNoPadding() {
+        XCTAssertEqual(SuggestCore.maxReplacements, 9)
+        for language in ["ru", "de", nil] as [String?] {
+            let prompt = SuggestCore.systemPrompt(writingLanguage: language)
+            XCTAssertTrue(prompt.contains("Return up to 9 replacements for the whole SELECTION, most likely first: "
+                + "only ones the user may have meant, and fewer when fewer fit."), prompt)
+            XCTAssertFalse(prompt.contains("exactly"), prompt)
+            XCTAssertFalse(prompt.contains("add other words or wordings"), "padding: \(prompt)")
+        }
+        let twelve = (1...12).map { "option \($0)" }
+        let json = String(data: try! JSONSerialization.data(withJSONObject: ["replacements": twelve]), encoding: .utf8)!
+        XCTAssertEqual(SuggestCore.replacements(fromModelOutput: json, original: "x"), Array(twelve.prefix(9)))
+        XCTAssertEqual(SuggestCore.replacements(fromModelOutput: #"["a", "b"]"#, original: "x"), ["a", "b"], "fewer stay fewer")
+    }
+
+    func testAllNineArePickedByTheTopRowAndByCommandKeypad() {
+        for line in 1...9 {
+            let bindings = SuggestCore.keyBindings.filter { $0.key == .pick(line) }
+            XCTAssertEqual(bindings.filter(\.command).count, 1, "⌘ + keypad \(line)")
+            XCTAssertEqual(bindings.filter { !$0.command }.count, 1, "top-row \(line)")
+        }
+        XCTAssertEqual(SuggestCore.FooterHints.pick(count: 9, keyLabel: "Fn"), "Fn + 1–9 paste")
+        XCTAssertEqual(SuggestCore.FooterHints.pick(count: 7, keyLabel: nil), "1–7 paste")
+    }
+
+    // MARK: - Nine beside the selection
+
+    func testTheRunPlansForNineRows() {
+        XCTAssertEqual(SuggestCore.plannedListHeight, 54 + 9 * 27)
+        // A selection 250 pt above the bottom of a 875 pt screen: a 189 pt list (five) fit below, nine do not.
+        let visible = CGRect(x: 0, y: 0, width: 1440, height: 875)
+        let anchor = CGRect(x: 600, y: 250, width: 80, height: 18)
+        XCTAssertEqual(SuggestCore.runSide(size: CGSize(width: 220, height: 40), anchor: anchor, visible: visible), .above)
+    }
+
+    func testTheRoomIsTheRoomierSideOfTheSelection() {
+        let visible = CGRect(x: 0, y: 25, width: 1440, height: 850)
+        XCTAssertEqual(SuggestCore.listRoom(anchor: CGRect(x: 10, y: 300, width: 50, height: 20), visible: visible), 875 - 320 - 4)
+        XCTAssertEqual(SuggestCore.listRoom(anchor: CGRect(x: 10, y: 700, width: 50, height: 20), visible: visible), 700 - 4 - 25)
+        XCTAssertEqual(SuggestCore.listRoom(anchor: nil, visible: visible), 850)
+    }
+
+    func testOptionsGetShorterOnlyWhileTheListDoesNotFit() {
+        XCTAssertNil(SuggestCore.smallerOptionLineLimit(current: 8, height: 400, room: 400), "fits: options stay whole")
+        XCTAssertEqual(SuggestCore.smallerOptionLineLimit(current: 8, height: 401, room: 400), 7)
+        XCTAssertEqual(SuggestCore.smallerOptionLineLimit(current: 2, height: 900, room: 400), 1)
+        XCTAssertNil(SuggestCore.smallerOptionLineLimit(current: 1, height: 900, room: 400), "one line is the least")
+        XCTAssertEqual(SuggestCore.maxOptionLines, 8)
     }
 
     func testOtherSettingsGetTheRuleWithEnglishExamplesOnly() {
@@ -59,7 +121,7 @@ final class SuggestF17Tests: XCTestCase {
             let prompt = SuggestCore.systemPrompt(writingLanguage: language)
             XCTAssertTrue(prompt.contains(englishOnlyRule), "\(language ?? "en-only"): \(prompt)")
             XCTAssertFalse(prompt.contains("«"), "Russian examples for \(language ?? "en-only")")
-            XCTAssertTrue(prompt.hasSuffix(Self.formatF17 + " 7 distinct items."))
+            XCTAssertTrue(prompt.hasSuffix(Self.formatF17))
         }
         XCTAssertTrue(SuggestCore.systemPrompt(writingLanguage: nil).contains("invent none.\n- Prefer replacements"))
     }
@@ -86,15 +148,17 @@ final class SuggestF17Tests: XCTestCase {
         return SuggestCore.answer(fromModelOutput: json, original: original, excluding: shown, spelling: spelling)
     }
 
+    private let nine = ["хватает", "мало", "вполне", "с запасом", "предостаточно", "много", "избыточно", "в достатке", "вдоволь"]
+
     func testAnOppositeRankedInTheListStaysWhereTheModelPutIt() {
-        let a = answer("Недостаточно.", ["хватает", "недостаточно", "мало", "вполне", "с запасом", "много", "избыточно"])
-        XCTAssertEqual(a.items, ["хватает", "недостаточно", "мало", "вполне", "с запасом"])
+        let a = answer("Недостаточно.", ["хватает", "недостаточно"] + nine.dropFirst())
+        XCTAssertEqual(a.items, ["хватает", "недостаточно"] + nine[1..<8])
         XCTAssertEqual(a.opposite, .ranked)
     }
 
     func testAnOppositeRankedBelowTheListTakesTheLastPlace() {
-        let a = answer("недостаточно", ["хватает", "мало", "вполне", "с запасом", "предостаточно", "много", "недостаточно"])
-        XCTAssertEqual(a.items, ["хватает", "мало", "вполне", "с запасом", "недостаточно"], "the top four keep their order")
+        let a = answer("недостаточно", nine + ["слишком много", "недостаточно"])
+        XCTAssertEqual(a.items, Array(nine.prefix(8)) + ["недостаточно"], "the top eight keep their order")
         XCTAssertEqual(a.opposite, .added)
     }
 
@@ -105,23 +169,24 @@ final class SuggestF17Tests: XCTestCase {
     }
 
     func testNoOppositeLeavesTheListAsBefore() {
-        let items = ["Katya", "Kate", "Катерина", "Катюша", "Таня", "Маша"]
+        let items = ["Katya", "Kate", "Катерина", "Катюша", "Таня", "Маша", "Катька", "Катенька", "Катрин", "Кэт"]
+        let list = #"["Katya", "Kate", "Катерина", "Катюша", "Таня", "Маша", "Катька", "Катенька", "Катрин", "Кэт"]"#
         for json in [
-            #"{"meaning": "m", "opposite": null, "replacements": ["Katya", "Kate", "Катерина", "Катюша", "Таня", "Маша"]}"#,
-            #"{"meaning": "m", "replacements": ["Katya", "Kate", "Катерина", "Катюша", "Таня", "Маша"]}"#,
-            #"{"meaning": "m", "opposite": "  ", "replacements": ["Katya", "Kate", "Катерина", "Катюша", "Таня", "Маша"]}"#,
-            #"{"meaning": "m", "opposite": ["не Катя"], "replacements": ["Katya", "Kate", "Катерина", "Катюша", "Таня", "Маша"]}"#,
-            #"["Katya", "Kate", "Катерина", "Катюша", "Таня", "Маша"]"#,
+            #"{"meaning": "m", "opposite": null, "replacements": "# + list + "}",
+            #"{"meaning": "m", "replacements": "# + list + "}",
+            #"{"meaning": "m", "opposite": "  ", "replacements": "# + list + "}",
+            #"{"meaning": "m", "opposite": ["не Катя"], "replacements": "# + list + "}",
+            list,
         ] {
             let a = SuggestCore.answer(fromModelOutput: json, original: "Катя")
-            XCTAssertEqual(a.items, Array(items.prefix(5)), json)
+            XCTAssertEqual(a.items, Array(items.prefix(9)), json)
             XCTAssertEqual(a.opposite, SuggestCore.OppositePlacement.none, json)
             XCTAssertEqual(SuggestCore.replacements(fromModelOutput: json, original: "Катя"), a.items, json)
         }
     }
 
     func testAnOppositeTheFiltersWouldDropIsNotAdded() {
-        let full = ["хватает", "мало", "вполне", "с запасом", "предостаточно"]
+        let full = nine
         let same = answer(" достаточно ", full)
         XCTAssertEqual(same.items, full)
         XCTAssertEqual(same.opposite, .dropped, "the original itself")
@@ -137,9 +202,8 @@ final class SuggestF17Tests: XCTestCase {
     }
 
     func testAnOppositeShownInAnEarlierSetIsNotShownAgain() {
-        let a = answer("недостаточно", ["хватает", "мало", "вполне", "с запасом", "предостаточно"],
-                       shown: ["Недостаточно", "много"])
-        XCTAssertEqual(a.items, ["хватает", "мало", "вполне", "с запасом", "предостаточно"])
+        let a = answer("недостаточно", nine, shown: ["Недостаточно", "чересчур"])
+        XCTAssertEqual(a.items, nine)
         XCTAssertEqual(a.opposite, .shownBefore)
     }
 

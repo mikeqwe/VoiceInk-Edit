@@ -11,16 +11,15 @@ import Foundation
 /// the I/O. Fork F4: where the list opens, and what each option changes. Foundation and
 /// CoreGraphics geometry only: `Tests/Suggest` runs it with `swift test`.
 enum SuggestCore {
-    static let maxReplacements = 5
-
-    /// Fork F8: how many replacements the prompt asks for. The local filters drop some items
-    /// (the original, case-only repeats, misspellings), so asking for more than the list shows
-    /// keeps it at `maxReplacements` without a second request.
-    static let requestedReplacements = 7
+    /// Fork F17: up to nine (was five; the owner, 23.11: different cases do not fit in five). The
+    /// prompt asks for at most this many, most likely first, and fewer when fewer fit: no padding.
+    /// F8's "ask for seven so five remain" is gone with the padding; the filters may leave fewer.
+    static let maxReplacements = 9
 
     /// The longest selection Suggest takes, in characters. Every replacement repeats the
-    /// whole selection, so five of them are up to five times this long, and the list shows
-    /// each one whole in at most eight lines of about 80 characters.
+    /// whole selection, so nine of them are up to nine times this long, and the list shows
+    /// each one in at most eight lines of about 80 characters (fewer when the list would not
+    /// fit beside the selection: `smallerOptionLineLimit`).
     static let maxSelectionLength = 500
 
     static func acceptsSelection(_ selection: String) -> Bool {
@@ -600,10 +599,38 @@ enum SuggestCore {
     /// Space between the selected text and the list.
     static let panelGap: CGFloat = 4
 
-    /// The height of a list of five one-line options as the F5 build drew it (200 × 189 pt,
-    /// `impl/voiceink/evidence/f5/final/result.txt`). A run picks its side for a list this tall
-    /// (`runSide`), so "Thinking…" does not open below only to jump above when the options arrive.
-    static let plannedListHeight: CGFloat = 189
+    /// The height of a full list of one-line options: F5's build drew five in 189 pt (200 × 189,
+    /// `impl/voiceink/evidence/f5/final/result.txt`), 27 pt a row; F17's nine take 297. A run picks
+    /// its side for a list this tall (`runSide`), so "Thinking…" does not open below only to jump
+    /// above when the options arrive.
+    static let plannedListHeight: CGFloat = listChromeHeight + CGFloat(maxReplacements) * optionRowHeight
+
+    // MARK: - Fitting nine beside the selection (F17)
+
+    /// The most lines one option wraps to (F4: an option whole in at most eight lines).
+    static let maxOptionLines = 8
+    /// A list's height besides its rows: the top line, the footer and their padding (F5's five
+    /// one-line rows of 27 pt in 189 pt).
+    static let listChromeHeight: CGFloat = 54
+    /// One option row with one line of text.
+    static let optionRowHeight: CGFloat = 27
+
+    /// The room for the list on the roomier side of a selection at `anchor`, or the whole visible
+    /// height with no anchor (AppKit coordinates).
+    static func listRoom(anchor: CGRect?, visible: CGRect) -> CGFloat {
+        guard let anchor else { return visible.height }
+        return max(anchor.minY - panelGap - visible.minY, visible.maxY - anchor.maxY - panelGap)
+    }
+
+    /// The next line limit to try for the options of a list measured `height` tall, when it does not
+    /// fit in `room` beside the selection: one line fewer, down to one. Nil when it fits (or is one
+    /// line a row already), so `panelOrigin` only has to put a list over the selection when even
+    /// one-line options do not fit. A cut option ends in "…"; its pick pastes the whole option. Each
+    /// list starts again at `maxOptionLines`, so only long options on a short side are cut.
+    static func smallerOptionLineLimit(current: Int, height: CGFloat, room: CGFloat) -> Int? {
+        guard height > room, current > 1 else { return nil }
+        return current - 1
+    }
 
     /// The side a run takes when it first shows: where a list at least `plannedListHeight` tall
     /// would go. Later placements keep it (`panelOrigin(…keeping:)`).
@@ -1035,9 +1062,9 @@ enum SuggestCore {
         return """
         The user selected some text, given as SELECTION: a word, a phrase or a few lines. The \
         selected text is not right here. The user wants something else in its place, even when the \
-        SELECTION is a correctly spelled word. Return exactly \(requestedReplacements) replacements \
-        for the whole SELECTION, most likely first. Each replacement must fit the text in place of \
-        the SELECTION.
+        SELECTION is a correctly spelled word. Return up to \(maxReplacements) replacements for \
+        the whole SELECTION, most likely first: only ones the user may have meant, and fewer when \
+        fewer fit. Each replacement must fit the text in place of the SELECTION.
 
         Rules for the replacements:
         - Each one is something the user may have meant instead: a word or phrase that sounds like \
@@ -1059,8 +1086,6 @@ enum SuggestCore {
         of them. The one exception: when the SELECTION's own error is its letter case or \
         punctuation, one replacement may fix only that.
         \(oppositeRule(writingLanguage: writingLanguage))\(writingRule)- Prefer replacements that make sense in the text over words that only sound alike.
-        - When fewer such replacements exist, add other words or wordings that fit the text and \
-        keep its meaning.
 
         Never return the SELECTION unchanged. TEXT_BEFORE and TEXT_AFTER, when present, are the \
         text around the SELECTION. OTHER_TEXT, when present, is \(otherTextNote). SCREEN_TEXT, when \
@@ -1070,8 +1095,8 @@ enum SuggestCore {
         JSON only, with no other text, even when the SELECTION looks right: \
         {"meaning": "...", "opposite": "..." or null, "replacements": ["...", "..."]}: first "meaning", \
         a few words on what the text says at the SELECTION's place and who says it to whom, then \
-        "opposite", the opposite reading or null, then "replacements" with exactly \
-        \(requestedReplacements) distinct items.
+        "opposite", the opposite reading or null, then "replacements" with at most \
+        \(maxReplacements) distinct items.
         """
     }
 

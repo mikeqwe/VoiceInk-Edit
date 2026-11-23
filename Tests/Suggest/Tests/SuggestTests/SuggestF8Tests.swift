@@ -16,10 +16,10 @@ final class SuggestF8Tests: XCTestCase {
             SuggestCore.replacements(fromModelOutput: output, original: "быстро", spelling: spelling),
             ["быстр", "быстра", "сразу", "быстрее"])
         XCTAssertEqual(SuggestCore.misspellingCount(inModelOutput: output, original: "быстро", spelling: spelling), 2)
-        // Without the check nothing changes (the tests and callers before F8).
+        // Without the check nothing changes (the tests and callers before F8). F17: all six fit in nine (was the first five).
         XCTAssertEqual(
             SuggestCore.replacements(fromModelOutput: output, original: "быстро"),
-            ["быстр", "бысто", "выстро", "быстра", "сразу"])
+            ["быстр", "бысто", "выстро", "быстра", "сразу", "быстрее"])
     }
 
     func testTheGuardKeepsWhatIsNotAMisspellingOfTheOriginal() {
@@ -79,11 +79,10 @@ final class SuggestF8Tests: XCTestCase {
         XCTAssertEqual(SuggestCore.unparsedShape(#"{"other": ["Claude"]}"#), "no-list")
     }
 
-    func testSevenAreAskedForAndFiveShown() {
-        XCTAssertEqual(SuggestCore.maxReplacements, 5)
-        XCTAssertEqual(SuggestCore.requestedReplacements, 7)
+    func testTheFiltersDropTheOriginalAMisspellingAndARepeat() {
+        // F17: up to nine are asked for and shown (F8: seven asked, five shown; pinned in SuggestF17Tests).
         let output = #"{"replacements": ["быстро", "бысто", "сразу", "Сразу", "тут же", "моментально", "немедленно", "оперативно"]}"#
-        // The original, a misspelling and a case repeat are dropped; five remain of seven asked.
+        // The original, a misspelling and a case repeat are dropped; five remain of the eight answered.
         XCTAssertEqual(
             SuggestCore.replacements(fromModelOutput: output, original: "быстро", spelling: spelling),
             ["сразу", "тут же", "моментально", "немедленно", "оперативно"])

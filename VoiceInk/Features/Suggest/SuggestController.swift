@@ -318,9 +318,10 @@ final class SuggestController {
                 return
             }
             session?.show(items)
+            model.optionLineLimit = SuggestCore.maxOptionLines
             model.items = items
             let side = panel.fitToContent()
-            Self.logger.notice("Suggest ready count=\(items.count, privacy: .public) seconds=\(Date().timeIntervalSince(started), format: .fixed(precision: 2), privacy: .public) side=\(side.rawValue, privacy: .public)")
+            Self.logger.notice("Suggest ready count=\(items.count, privacy: .public) optionLines=\(self.model.optionLineLimit, privacy: .public) seconds=\(Date().timeIntervalSince(started), format: .fixed(precision: 2), privacy: .public) side=\(side.rawValue, privacy: .public)")
         } catch {
             guard isCurrent else { return }
             fail("Suggest failed: \(error.localizedDescription) Nothing was changed.", reason: "request-error")
@@ -412,6 +413,7 @@ final class SuggestController {
         if var session, session.restorePrevious(), case .ready(let items) = session.phase {
             self.session = session
             request = nil
+            model.optionLineLimit = SuggestCore.maxOptionLines
             model.items = items
             panel.fitToContent()
             Self.logger.notice("Suggest new set failed reason=\(reason, privacy: .public) restored=\(items.count, privacy: .public)")
@@ -787,6 +789,9 @@ final class SuggestPanelModel: ObservableObject {
     @Published var items: [String]? {
         didSet { pointer.reset() }
     }
+    /// Fork F17: how many lines each option may wrap to, so the list fits beside the selection
+    /// (`SuggestCore.smallerOptionLineLimit`); back to the most with each new list.
+    @Published var optionLineLimit = SuggestCore.maxOptionLines
     /// The picked line (1-based) while the list confirms it.
     @Published var picked: Int?
     /// What the pointer hovers and holds (F7).
@@ -888,20 +893,17 @@ final class SuggestPanel: SuggestNonActivatingPanel {
     @discardableResult
     func fitToContent() -> SuggestCore.PanelSide {
         hostingView.layoutSubtreeIfNeeded()
-        let size = hostingView.fittingSize
-        let screens = NSScreen.screens
-        var placedAnchor: CGRect?
-        var visible: CGRect?
-        if let anchor, let primary = screens.first {
-            let rect = SuggestCore.appKitRect(fromAccessibility: anchor, primaryScreenMaxY: primary.frame.maxY)
-            if let index = SuggestCore.screenHolding(rect, screenFrames: screens.map(\.frame)) {
-                placedAnchor = rect
-                visible = screens[index].visibleFrame
+        var size = hostingView.fittingSize
+        let (placedAnchor, visible) = placement()
+        // Fork F17: a list too tall for the roomier side of the selection gets shorter options, so it
+        // does not cover the selection.
+        if model.items != nil, let visible {
+            let room = SuggestCore.listRoom(anchor: placedAnchor, visible: visible)
+            while let lower = SuggestCore.smallerOptionLineLimit(current: model.optionLineLimit, height: size.height, room: room) {
+                model.optionLineLimit = lower
+                hostingView.layoutSubtreeIfNeeded()
+                size = hostingView.fittingSize
             }
-        }
-        if visible == nil {
-            let mouse = NSEvent.mouseLocation
-            visible = (screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main)?.visibleFrame
         }
         guard let visible else {
             setContentSize(size)
@@ -915,6 +917,20 @@ final class SuggestPanel: SuggestNonActivatingPanel {
         if placedAnchor != nil { runSide = placed.side }
         setFrame(NSRect(origin: placed.origin, size: size), display: true)
         return placed.side
+    }
+
+    /// The selection's rectangle in AppKit coordinates when it is on a screen, and the visible frame
+    /// of that screen, else of the mouse's screen.
+    private func placement() -> (anchor: CGRect?, visible: CGRect?) {
+        let screens = NSScreen.screens
+        if let anchor, let primary = screens.first {
+            let rect = SuggestCore.appKitRect(fromAccessibility: anchor, primaryScreenMaxY: primary.frame.maxY)
+            if let index = SuggestCore.screenHolding(rect, screenFrames: screens.map(\.frame)) {
+                return (rect, screens[index].visibleFrame)
+            }
+        }
+        let mouse = NSEvent.mouseLocation
+        return (nil, (screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main)?.visibleFrame)
     }
 }
 
@@ -1161,7 +1177,7 @@ struct SuggestPanelView: View {
                 .font(.system(size: 14))
                 .foregroundStyle(.primary)
                 .lineSpacing(3)
-                .lineLimit(8)
+                .lineLimit(model.optionLineLimit)
                 .truncationMode(.tail)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)

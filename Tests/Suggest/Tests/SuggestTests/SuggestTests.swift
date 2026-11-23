@@ -92,12 +92,13 @@ final class SuggestTests: XCTestCase {
         XCTAssertEqual(WebAccessibilityKeepOn.defaultBundleIdentifiers, ["com.t3tools.t3code", "com.tinyspeck.slackmacgap"])
     }
 
-    func testAtMostFiveReplacements() {
-        let output = "[\"a\", \"b\", \"c\", \"d\", \"e\", \"f\", \"g\", \"h\"]"
-        XCTAssertEqual(SuggestCore.replacements(fromModelOutput: output, original: "x"), ["a", "b", "c", "d", "e"])
+    func testAtMostNineReplacements() {
+        // F17: nine (was five).
+        let output = "[\"a\", \"b\", \"c\", \"d\", \"e\", \"f\", \"g\", \"h\", \"i\", \"j\", \"k\"]"
+        XCTAssertEqual(SuggestCore.replacements(fromModelOutput: output, original: "x"), ["a", "b", "c", "d", "e", "f", "g", "h", "i"])
         // The cap counts kept items, after drops.
-        let withDrops = "[\"x\", \"a\", \"a\", \"b\", \"c\", \"d\", \"e\", \"f\"]"
-        XCTAssertEqual(SuggestCore.replacements(fromModelOutput: withDrops, original: "x"), ["a", "b", "c", "d", "e"])
+        let withDrops = "[\"x\", \"a\", \"a\", \"b\", \"c\", \"d\", \"e\", \"f\", \"g\", \"h\", \"i\", \"j\"]"
+        XCTAssertEqual(SuggestCore.replacements(fromModelOutput: withDrops, original: "x"), ["a", "b", "c", "d", "e", "f", "g", "h", "i"])
     }
 
     // MARK: Keys
@@ -322,9 +323,9 @@ final class SuggestTests: XCTestCase {
         // punctuation (was: always allowed, which gave "tomorrow", "Tomorrow", "tomorrow.").
         XCTAssertTrue(prompt.contains("when the SELECTION's own error is its letter case or punctuation"), prompt)
         XCTAssertFalse(prompt.contains("differs from the SELECTION only in letter case is allowed"))
-        // F8: the prompt asks for 7 so that 5 remain after the local filters (was: exactly 5).
-        XCTAssertTrue(prompt.contains("Return exactly 7 replacements"))
-        XCTAssertTrue(prompt.contains("with exactly \n7 distinct items") || prompt.contains("with exactly 7 distinct items"), prompt)
+        // F8 asked for 7 so that 5 remained after the local filters; F17 asks for up to 9, with no padding.
+        XCTAssertTrue(prompt.contains("Return up to 9 replacements"))
+        XCTAssertTrue(prompt.contains("with at most 9 distinct items"), prompt)
         XCTAssertTrue(prompt.contains("OTHER_TEXT, when present, is other text visible in the same window; may be unrelated."))
         XCTAssertTrue(prompt.contains("REJECTED, when present, lists replacements already offered"))
         XCTAssertTrue(prompt.contains("a word, a phrase or a few lines"))

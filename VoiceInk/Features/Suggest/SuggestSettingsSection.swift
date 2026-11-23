@@ -21,7 +21,7 @@ struct SuggestSettingsSection: View {
             } label: {
                 HStack(spacing: 4) {
                     Text("Suggest Replacement")
-                    InfoTip("Select a word or a phrase in any app and press this shortcut. VoiceInk lists up to five replacements: press 1–5 or click one to paste it, or Esc to close. Press the shortcut again for a new set.")
+                    InfoTip("Select a word or a phrase in any app and press this shortcut. VoiceInk lists up to nine replacements: press 1–9 or click one to paste it, or Esc to close. Press the shortcut again for a new set.")
                 }
             }
 

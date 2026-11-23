@@ -9,7 +9,7 @@ rebuild to update. Upstream's README, license (GPL-3.0) and build instructions a
 
 | Feature | What it does | Where to set it up |
 | --- | --- | --- |
-| **Suggest Replacement** | Select a word, a phrase or a line in any app and press the shortcut. A small list opens at the selection with up to five replacements that fit the surrounding text. Press 1–5 (top row, or ⌘ + keypad 1–9) or click one to paste it over the selection; Esc closes the list and changes nothing, and so does typing a character, Backspace or Delete (the key still reaches the app; arrows and ⏎ keep the list). Press the shortcut again, or click *more*, for a new set. When the selection says whether something is, can, must or happens («достаточно», «можно», "can", "is working"), one of the five is its opposite reading, the selection with its negation added or removed («недостаточно», «нельзя», "can't", "isn't working"), because dictation often loses or adds such a short word: first when the text around says the opposite, otherwise lower, and never pushed out of the five. Names, terms, code, numbers and dates get none. Each answer logs `Suggest answer … opposite=none|ranked|added|shown-before|dropped`. | Settings → Suggest → *Suggest Replacement*. It is unbound until you bind it. |
+| **Suggest Replacement** | Select a word, a phrase or a line in any app and press the shortcut. A small list opens at the selection with up to nine replacements that fit the surrounding text, most likely first, and fewer when fewer fit. Press 1–9 (top row, or ⌘ + keypad 1–9) or click one to paste it over the selection; Esc closes the list and changes nothing, and so does typing a character, Backspace or Delete (the key still reaches the app; arrows and ⏎ keep the list). Press the shortcut again, or click *more*, for a new set. When the selection says whether something is, can, must or happens («достаточно», «можно», "can", "is working"), one of the replacements is its opposite reading, the selection with its negation added or removed («недостаточно», «нельзя», "can't", "isn't working"), because dictation often loses or adds such a short word: first when the text around says the opposite, otherwise lower, and never pushed out of the list. Names, terms, code, numbers and dates get none. Each answer logs `Suggest answer … opposite=none|ranked|added|shown-before|dropped`. The list opens under the selection, or above it when there is no room; when long options would not fit on either side, each option is cut to fewer lines (down to one, ending in "…"; a pick still pastes it whole), so the list does not cover the selection (`Suggest ready … optionLines=`). | Settings → Suggest → *Suggest Replacement*. It is unbound until you bind it. |
 | **Quick Add takes the selection** | Quick Add to Dictionary opens with the selected text already filled in. | Dictionary → Dictionary Settings → *Quick Add to Dictionary*. |
 | **Keep web accessibility on** | Electron apps (Slack, T3 Code, …) show their full text to Accessibility only while their web accessibility is on, and stock VoiceInk switches it off after each read. For the apps you list, VoiceInk turns it on and leaves it on, so Suggest and selected-text context can read them. Other apps are restored as before. | Settings → Suggest → *Keep Web Accessibility On*, and the app list under it (default: T3 Code and Slack). |
 | **Hybrid hold threshold** | In the Hybrid recording mode, a press shorter than the threshold records hands-free and a longer hold records until release. Stock VoiceInk fixes it at 500 ms; here you choose 200–500 ms (default 300 ms). | Settings → Shortcuts → *Hybrid Hold Threshold* (shown when a shortcut uses Hybrid). |
@@ -46,12 +46,12 @@ screen text included, on this Mac. Turn the switches off for modes where that is
 
 ### Suggest footer key names (optional)
 
-The list's footer names the keys: "1–5 paste · ⌃⌥S more", with your bound Suggest shortcut. If a
+The list's footer names the keys: "1–9 paste · ⌃⌥S more", with your bound Suggest shortcut. If a
 keyboard or macro pad sends that shortcut from a key with another name, set the names it should
 show (VoiceInk quit or running, no rebuild):
 
 ```bash
-defaults write com.prakashjoshipax.VoiceInk suggestPickKeyLabel -string "Fn"   # "Fn + 1–5 paste"
+defaults write com.prakashjoshipax.VoiceInk suggestPickKeyLabel -string "Fn"   # "Fn + 1–9 paste"
 defaults write com.prakashjoshipax.VoiceInk suggestMoreKeyLabel -string "F16"  # "F16 more"
 ```
 
