@@ -65,7 +65,7 @@ final class SuggestF17Tests: XCTestCase {
     /// Golden at 5: his prompt with Number of Replacements set to 5 is F16's with the same F17 changes, at 5.
     func testHisPromptAtFiveIsF16sWithTheRuleFieldAndCountFive() {
         XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru", count: 5),
-                       Self.withF17(SuggestF16Tests.suggestPromptBeforeF16, count: 5))
+                       SuggestF18Tests.withF18(Self.withF17(SuggestF16Tests.suggestPromptBeforeF16, count: 5)))
     }
 
     /// Number of Replacements (Settings → Suggest): 3 to 9, nine by default. The prompt asks for exactly that many,

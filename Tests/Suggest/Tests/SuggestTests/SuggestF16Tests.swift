@@ -83,8 +83,9 @@ final class SuggestF16Tests: XCTestCase {
         """
 
     func testHisWritingLanguageGivesTheSuggestPromptAsBefore() {
-        // F17 adds the opposite-reading rule and field; nothing else of his prompt changes.
-        XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru"), SuggestF17Tests.withF17(Self.suggestPromptBeforeF16))
+        // F17 adds the opposite-reading rule and field, F18 the SPELLING sentence; nothing else of his prompt changes.
+        XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru"),
+                       SuggestF18Tests.withF18(SuggestF17Tests.withF17(Self.suggestPromptBeforeF16)))
         XCTAssertTrue(Self.suggestPromptBeforeF16.contains("The user writes Russian and English"), "the copy is the old prompt")
     }
 

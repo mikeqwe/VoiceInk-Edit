@@ -41,6 +41,8 @@ final class SuggestController {
         let writingLanguage: String?
         /// Fork F17: how many replacements to ask for and show (`SuggestCore.replacementCount`).
         let count: Int
+        /// Fork F18: the spell checker's stem words for a selection it does not know (`SuggestCore.spellingHints`).
+        let spellingHints: [String]
     }
 
     /// Suggest waits at least this long for the model. The whole field text can be tens of
@@ -275,7 +277,9 @@ final class SuggestController {
             model: target.model,
             vocabulary: vocabulary.terms,
             writingLanguage: writingLanguage,
-            count: count
+            count: count,
+            spellingHints: SuggestCore.spellingHints(
+                for: selection, candidates: SuggestSpelling.candidates(for: selection, writingLanguage: writingLanguage))
         )
         asked = request
         await ask(request, rejected: [])
@@ -284,13 +288,14 @@ final class SuggestController {
     /// Fork F8: an answer with no usable option (not JSON, or every item dropped) is asked once
     /// more before the notice; F7 saw 5 such answers in 41.
     private func ask(_ request: Request, rejected: [String], attempt: Int = 1) async {
-        let message = SuggestCore.userMessage(selection: request.selection, context: request.context, rejected: rejected)
+        let message = SuggestCore.userMessage(
+            selection: request.selection, context: request.context, rejected: rejected, spelling: request.spellingHints)
         let context = request.context
         let aroundChars = context.around.map { $0.before.utf16.count + $0.after.utf16.count } ?? 0
         let otherChars = context.other.reduce(0) { $0 + $1.utf16.count }
         let screenChars = context.screen?.utf16.count ?? 0
         let effort = EditingModelEffort.current(EditingModelEffort.suggest)
-        Self.logger.notice("Suggest request provider=\(request.provider.rawValue, privacy: .public) model=\(request.model ?? "default", privacy: .public) selectionChars=\(request.selection.count, privacy: .public) context=\(context.around != nil, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) otherChars=\(otherChars, privacy: .public) screenChars=\(screenChars, privacy: .public) effort=\(request.provider == .anthropic ? effort.effort.logValue(model: request.model ?? "default", invalid: effort.invalid) : "n/a", privacy: .public) rejected=\(rejected.count, privacy: .public) writingLanguage=\(request.writingLanguage ?? "en-only", privacy: .public) count=\(request.count, privacy: .public)")
+        Self.logger.notice("Suggest request provider=\(request.provider.rawValue, privacy: .public) model=\(request.model ?? "default", privacy: .public) selectionChars=\(request.selection.count, privacy: .public) context=\(context.around != nil, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) otherChars=\(otherChars, privacy: .public) screenChars=\(screenChars, privacy: .public) effort=\(request.provider == .anthropic ? effort.effort.logValue(model: request.model ?? "default", invalid: effort.invalid) : "n/a", privacy: .public) rejected=\(rejected.count, privacy: .public) writingLanguage=\(request.writingLanguage ?? "en-only", privacy: .public) count=\(request.count, privacy: .public) spellingHints=\(request.spellingHints.count, privacy: .public)")
         let started = Date()
         do {
             let completion = try await aiService.performChatCompletion(
@@ -1348,6 +1353,26 @@ private struct SuggestKeyChip: View {
 /// checker of its own script: the English checker passes any Cyrillic word, and a word that mixes
 /// the two scripts is never a real word.
 enum SuggestSpelling {
+    /// Fork F18: for one word no checker knows, each usable checker's guesses and then its completions of the
+    /// word's first `max(3, length - 4)` letters, in that order. A known word, several words, or no usable
+    /// checker give none. `SuggestCore.spellingHints` keeps those that share the word's stem.
+    static func candidates(for selection: String, writingLanguage: String?) -> [String] {
+        let word = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !word.isEmpty, !word.contains(where: \.isWhitespace), !isWord(word, writingLanguage: writingLanguage),
+              let languages = SuggestCore.spellingLanguages(forWord: word, writingLanguage: writingLanguage) else { return [] }
+        let checker = NSSpellChecker.shared
+        let available = Set(checker.availableLanguages.compactMap(OutputLanguage.primaryLanguage))
+        let length = (word as NSString).length
+        var out: [String] = []
+        for language in languages where available.contains(language) {
+            out += checker.guesses(forWordRange: NSRange(location: 0, length: length), in: word,
+                                   language: language, inSpellDocumentWithTag: 0) ?? []
+            out += checker.completions(forPartialWordRange: NSRange(location: 0, length: min(length, max(3, length - 4))),
+                                       in: word, language: language, inSpellDocumentWithTag: 0) ?? []
+        }
+        return out
+    }
+
     /// Fork F16: the checkers come from `SuggestCore.spellingLanguages` (the writing language and English,
     /// by script); a word is real when one of them knows it. A checker macOS does not have is skipped, and
     /// a word no checker can judge counts as a word, so the guard drops nothing for it.
