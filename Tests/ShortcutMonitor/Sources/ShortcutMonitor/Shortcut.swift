@@ -1,0 +1,1 @@
+../../../../VoiceInk/Features/Shortcuts/Models/Shortcut.swift

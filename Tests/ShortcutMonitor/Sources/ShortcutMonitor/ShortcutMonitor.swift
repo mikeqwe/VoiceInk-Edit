@@ -1,0 +1,1 @@
+../../../../VoiceInk/Features/Shortcuts/Coordination/ShortcutMonitor.swift

@@ -521,7 +521,9 @@ private final class ShortcutMonitorWorker: @unchecked Sendable {
             modifierFlags: modifierFlags
         )
 
-        if kind == .keyDown {
+        // An auto-repeat is a key that was already down, not another key pressed during the shortcut,
+        // so it never cancels a held shortcut (a remapper's own source key repeats under the chord it posts).
+        if kind == .keyDown, !isAutoRepeat {
             handleShortcutInterruptions(keyCode: inputCode, eventTime: eventTime)
         }
 

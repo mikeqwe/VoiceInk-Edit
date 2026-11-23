@@ -13,6 +13,7 @@ rebuild to update. Upstream's README, license (GPL-3.0) and build instructions a
 | **Quick Add takes the selection** | Quick Add to Dictionary opens with the selected text already filled in. | Dictionary → Dictionary Settings → *Quick Add to Dictionary*. |
 | **Keep web accessibility on** | Electron apps (Slack, T3 Code, …) show their full text to Accessibility only while their web accessibility is on, and stock VoiceInk switches it off after each read. For the apps you list, VoiceInk turns it on and leaves it on, so Suggest and selected-text context can read them. Other apps are restored as before. | Settings → Suggest → *Keep Web Accessibility On*, and the app list under it (default: T3 Code and Slack). |
 | **Hybrid hold threshold** | In the Hybrid recording mode, a press shorter than the threshold records hands-free and a longer hold records until release. Stock VoiceInk fixes it at 500 ms; here you choose 200–500 ms (default 300 ms). | Settings → Shortcuts → *Hybrid Hold Threshold* (shown when a shortcut uses Hybrid). |
+| **Key repeat never cancels a held shortcut** | A held recording or mode shortcut that another key interrupts within 1 s is cancelled as an accidental start. Here a key that only auto-repeats does not count as one: it was already down. A key remapper (a macro pad, Hammerspoon, Karabiner) whose own key keeps repeating while it holds the shortcut for you therefore records for the whole hold, whichever event tap sees the key first. A fresh key-down still cancels. | Always on. |
 | **Rewrite pastes nothing when nothing was rewritten** | A take in a mode with the built-in Rewrite prompt pastes only when a selection was captured and the AI returned text. A failed or empty rewrite leaves the selection as it was and shows a notice, instead of pasting the spoken instruction over it. | Automatic. |
 | **Screen text only where a mode asks for it** | A mode's *Screen* context switch now decides whether a take reads the front window at all. Stock VoiceInk reads it on every take once Screen Recording is granted, and names from it reach every mode's vocabulary even with the switch off. Turning the switch on asks for Screen Recording. The text is read in the background while you speak, so a take does not start later. | Modes → a mode → Context → *Screen*. |
 | **Screen text for Suggest** | Suggest also sends the front window's recognized text, labelled as possibly unrelated, inside its usual context limit. Reading it starts with the press, beside the selection; the request waits for it at most 0.8 s after the press, then goes without it. | Settings → Suggest → *Use Screen Text* (on by default). |
@@ -96,7 +97,7 @@ Fork-owned files: `fork/`, `VoiceInk/Features/Suggest/`, `VoiceInk/Features/Reco
 `VoiceInk/Features/Recording/Context/RecordingScreenContext.swift`,
 `VoiceInk/Features/Enhancement/Workflows/OutputLanguage.swift`, `VoiceInk/Features/Enhancement/Workflows/OutputLanguageMonitor.swift`,
 `VoiceInk/Features/Settings/Views/OutputLanguageSettingsSection.swift`, `VoiceInk/Features/Settings/Views/AppListEditor.swift`, and the test
-packages `Tests/Suggest`, `Tests/RewriteDeliveryGate` and `Tests/EditingRequest` (`swift test` in each).
+packages `Tests/Suggest`, `Tests/RewriteDeliveryGate`, `Tests/EditingRequest` and `Tests/ShortcutMonitor` (`swift test` in each).
 
 Upstream files it touches: `README.md` (this section's link), `VoiceInk/Info.plist`,
 `VoiceInk/App/Lifecycle/AppDelegate.swift`, `VoiceInk/App/Updates/UpdaterViewModel.swift`,
@@ -105,7 +106,7 @@ Upstream files it touches: `README.md` (this section's link), `VoiceInk/Info.pli
 `VoiceInk/Features/Recording/Workflows/TranscriptionPipeline.swift`,
 `VoiceInk/Features/Settings/Backup/BackupTypes.swift`, `VoiceInk/Features/Settings/Backup/ImportExportService.swift`,
 `VoiceInk/Features/Settings/Backup/BackupImporter.swift`, `VoiceInk/Features/Settings/Views/SettingsView.swift`,
-`VoiceInk/Features/Shortcuts/Coordination/RecordingShortcutManager.swift`,
+`VoiceInk/Features/Shortcuts/Coordination/RecordingShortcutManager.swift`, `VoiceInk/Features/Shortcuts/Coordination/ShortcutMonitor.swift`,
 `VoiceInk/Features/Shortcuts/Models/ShortcutAction.swift`, `VoiceInk/Features/Shortcuts/State/ShortcutMigration.swift`,
 `VoiceInk/Infrastructure/SystemIntegration/Accessibility/AccessibilityTextReader.swift`,
 `VoiceInk/Features/Enhancement/Workflows/AIEnhancementService.swift`,
