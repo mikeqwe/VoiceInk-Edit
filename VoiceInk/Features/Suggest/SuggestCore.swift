@@ -68,6 +68,8 @@ enum SuggestCore {
     struct Answer: Equatable {
         let items: [String]
         let opposite: OppositePlacement
+        /// Fork F19: how many of `items` are the spell checker's stem words placed after the model's first option.
+        var stemWords: Int = 0
     }
 
     enum OppositePlacement: String, Equatable {
@@ -84,12 +86,55 @@ enum SuggestCore {
     }
 
     /// `limit`: the most the list shows, the run's `replacementCount` (at most `maxReplacements`).
+    /// Fork F19: `stemWords`, the request's SPELLING hints (`spellingHints`), go right after the model's first
+    /// option (`withStemWords`).
     static func answer(
         fromModelOutput output: String, original: String, excluding shown: [String] = [], spelling: Spelling? = nil,
-        limit: Int = maxReplacements
+        limit: Int = maxReplacements, stemWords: [String] = []
     ) -> Answer {
+        let model = modelAnswer(fromModelOutput: output, original: original, excluding: shown, spelling: spelling, limit: limit)
+        guard !stemWords.isEmpty, jsonAnswer(in: output) != nil else { return model.answer }
+        return withStemWords(stemWords, in: model.answer, opposite: model.opposite, original: original, excluding: shown,
+                             limit: limit)
+    }
+
+    /// Fork F19: the owner's «получательно» (23.11, 21:30) got SPELLING with «получателю» among ten stem words, and
+    /// no list had it: the model reads «…не нужны, понятно» as a fine sentence and drops a word that only sounds
+    /// right (Haiku and Sonnet alike; no prompt wording changed that). For a word no checker knows, the list is
+    /// therefore the model's first option, then the checker's stem words in the checker's order, then the model's
+    /// other options, cut to `limit`. Stem words already shown (a new set) or equal to the original are skipped.
+    /// The answer's opposite reading (`opposite`, its text when the list holds it) stays in the list (F17): cut by
+    /// the stem words, it takes the last place.
+    static func withStemWords(_ stemWords: [String], in model: Answer, opposite: String?, original: String,
+                              excluding shown: [String], limit: Int) -> Answer {
         let limit = min(max(limit, 1), maxReplacements)
-        guard let parsed = jsonAnswer(in: output) else { return Answer(items: [], opposite: .none) }
+        let originalText = original.trimmingCharacters(in: .whitespacesAndNewlines)
+        var seen = Set(shown.map(variantKey))
+        var items: [String] = []
+        var stems = Set<String>()
+        func add(_ text: String, stem: Bool) {
+            guard items.count < limit, !text.isEmpty, text != originalText, seen.insert(variantKey(text)).inserted else { return }
+            items.append(text)
+            if stem { stems.insert(text) }
+        }
+        model.items.prefix(1).forEach { add($0, stem: false) }
+        stemWords.forEach { add($0.trimmingCharacters(in: .whitespacesAndNewlines), stem: true) }
+        model.items.dropFirst().forEach { add($0, stem: false) }
+        var placement = model.opposite
+        if let opposite, !items.contains(where: { variantKey($0) == variantKey(opposite) }) {
+            if items.count == limit { items.removeLast() }
+            items.append(opposite)
+            placement = .added
+        }
+        return Answer(items: items, opposite: placement, stemWords: items.filter(stems.contains).count)
+    }
+
+    /// The model's list and its opposite reading's text when the list holds it (`ranked` or `added`).
+    private static func modelAnswer(
+        fromModelOutput output: String, original: String, excluding shown: [String], spelling: Spelling?, limit: Int
+    ) -> (answer: Answer, opposite: String?) {
+        let limit = min(max(limit, 1), maxReplacements)
+        guard let parsed = jsonAnswer(in: output) else { return (Answer(items: [], opposite: .none), nil) }
         let originalText = original.trimmingCharacters(in: .whitespacesAndNewlines)
         let shownKeys = Set(shown.map(variantKey))
         let usable = { (text: String) -> Bool in
@@ -106,15 +151,15 @@ enum SuggestCore {
             if result.count == limit { break }
         }
         guard let opposite = parsed.opposite?.trimmingCharacters(in: .whitespacesAndNewlines), !opposite.isEmpty else {
-            return Answer(items: result, opposite: .none)
+            return (Answer(items: result, opposite: .none), nil)
         }
         let key = variantKey(opposite)
-        if result.contains(where: { variantKey($0) == key }) { return Answer(items: result, opposite: .ranked) }
-        if shownKeys.contains(key) { return Answer(items: result, opposite: .shownBefore) }
-        guard usable(opposite) else { return Answer(items: result, opposite: .dropped) }
+        if let ranked = result.first(where: { variantKey($0) == key }) { return (Answer(items: result, opposite: .ranked), ranked) }
+        if shownKeys.contains(key) { return (Answer(items: result, opposite: .shownBefore), nil) }
+        guard usable(opposite) else { return (Answer(items: result, opposite: .dropped), nil) }
         if result.count == limit { result.removeLast() }
         result.append(opposite)
-        return Answer(items: result, opposite: .added)
+        return (Answer(items: result, opposite: .added), opposite)
     }
 
     /// Fork F8: the system spell checker, as Suggest's guard sees it. `isWord` says whether one
@@ -633,6 +678,7 @@ enum SuggestCore {
     enum PanelSide: String, Equatable, Sendable {
         case below, above, fallback
     }
+
 
     /// Space between the selected text and the list.
     static let panelGap: CGFloat = 4

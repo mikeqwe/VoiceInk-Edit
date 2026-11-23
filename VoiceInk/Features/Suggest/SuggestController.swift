@@ -317,11 +317,11 @@ final class SuggestController {
                 isWord: { SuggestSpelling.isWord($0, writingLanguage: request.writingLanguage) }, vocabulary: request.vocabulary)
             let answer = SuggestCore.answer(
                 fromModelOutput: completion.text, original: request.selection, excluding: rejected, spelling: spelling,
-                limit: request.count)
+                limit: request.count, stemWords: request.spellingHints)
             let items = answer.items
             let answered = SuggestCore.answerItemCount(completion.text).map(String.init)
                 ?? "not-json shape=\(SuggestCore.unparsedShape(completion.text))"
-            Self.logger.notice("Suggest answer items=\(answered, privacy: .public) kept=\(items.count, privacy: .public) misspelled=\(SuggestCore.misspellingCount(inModelOutput: completion.text, original: request.selection, spelling: spelling), privacy: .public) chars=\(completion.text.count, privacy: .public) opposite=\(answer.opposite.rawValue, privacy: .public) attempt=\(attempt, privacy: .public)")
+            Self.logger.notice("Suggest answer items=\(answered, privacy: .public) kept=\(items.count, privacy: .public) misspelled=\(SuggestCore.misspellingCount(inModelOutput: completion.text, original: request.selection, spelling: spelling), privacy: .public) chars=\(completion.text.count, privacy: .public) opposite=\(answer.opposite.rawValue, privacy: .public) stemWords=\(answer.stemWords, privacy: .public) attempt=\(attempt, privacy: .public)")
             if items.isEmpty, attempt == 1 {
                 Self.logger.notice("Suggest retry reason=no-usable-option")
                 await ask(request, rejected: rejected, attempt: 2)
