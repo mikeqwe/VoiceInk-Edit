@@ -58,14 +58,14 @@ final class SuggestF17Tests: XCTestCase {
     func testHisPromptIsF16sWithOnlyTheOppositeRuleAndField() {
         let prompt = SuggestCore.systemPrompt(writingLanguage: "ru")
         XCTAssertTrue(prompt.contains(Self.oppositeRuleRu + "- The user writes Russian and English"), prompt)
-        XCTAssertTrue(prompt.hasSuffix(Self.formatF17()), prompt)
+        XCTAssertTrue(prompt.hasSuffix(SuggestF20Tests.formatF20()), prompt) // F20 changed F17's format
         // The full equality with F16's verbatim copy is SuggestF16Tests.testHisWritingLanguageGivesTheSuggestPromptAsBefore.
     }
 
     /// Golden at 5: his prompt with Number of Replacements set to 5 is F16's with the same F17 changes, at 5.
     func testHisPromptAtFiveIsF16sWithTheRuleFieldAndCountFive() {
         XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru", count: 5),
-                       SuggestF18Tests.withF18(Self.withF17(SuggestF16Tests.suggestPromptBeforeF16, count: 5)))
+                       SuggestF20Tests.withF20(SuggestF18Tests.withF18(Self.withF17(SuggestF16Tests.suggestPromptBeforeF16, count: 5)), count: 5))
     }
 
     /// Number of Replacements (Settings → Suggest): 3 to 9, nine by default. The prompt asks for exactly that many,
@@ -89,10 +89,10 @@ final class SuggestF17Tests: XCTestCase {
         for count in [3, 5, 9] {
             for language in ["ru", "de", nil] as [String?] {
                 let prompt = SuggestCore.systemPrompt(writingLanguage: language, count: count)
-                XCTAssertTrue(prompt.contains("Return exactly \(count) replacements for the whole SELECTION, most likely first."), prompt)
-                XCTAssertTrue(prompt.contains("- When fewer such replacements exist, add other words or wordings that fit "
-                    + "the text and keep its meaning."), "the padding rule: \(prompt)")
-                XCTAssertTrue(prompt.hasSuffix("with exactly \(count) distinct items."), prompt)
+                // F20: up to the count, with the directions rule instead of F16's padding rule (SuggestF20Tests).
+                XCTAssertTrue(prompt.contains("Return up to \(count) replacements for the whole SELECTION, most likely first,"), prompt)
+                XCTAssertTrue(prompt.contains(SuggestF20Tests.directionsRule), "the directions rule: \(prompt)")
+                XCTAssertTrue(prompt.hasSuffix(SuggestF20Tests.formatF20(count: count)), prompt)
             }
         }
         XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru"), SuggestCore.systemPrompt(writingLanguage: "ru", count: 9))
@@ -153,7 +153,7 @@ final class SuggestF17Tests: XCTestCase {
             let prompt = SuggestCore.systemPrompt(writingLanguage: language)
             XCTAssertTrue(prompt.contains(englishOnlyRule), "\(language ?? "en-only"): \(prompt)")
             XCTAssertFalse(prompt.contains("«"), "Russian examples for \(language ?? "en-only")")
-            XCTAssertTrue(prompt.hasSuffix(Self.formatF17()))
+            XCTAssertTrue(prompt.hasSuffix(SuggestF20Tests.formatF20())) // F20 changed F17's format
         }
         XCTAssertTrue(SuggestCore.systemPrompt(writingLanguage: nil).contains("invent none.\n- Prefer replacements"))
     }

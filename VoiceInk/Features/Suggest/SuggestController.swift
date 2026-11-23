@@ -321,7 +321,7 @@ final class SuggestController {
             let items = answer.items
             let answered = SuggestCore.answerItemCount(completion.text).map(String.init)
                 ?? "not-json shape=\(SuggestCore.unparsedShape(completion.text))"
-            Self.logger.notice("Suggest answer items=\(answered, privacy: .public) kept=\(items.count, privacy: .public) misspelled=\(SuggestCore.misspellingCount(inModelOutput: completion.text, original: request.selection, spelling: spelling), privacy: .public) chars=\(completion.text.count, privacy: .public) opposite=\(answer.opposite.rawValue, privacy: .public) stemWords=\(answer.stemWords, privacy: .public) attempt=\(attempt, privacy: .public)")
+            Self.logger.notice("Suggest answer items=\(answered, privacy: .public) kept=\(items.count, privacy: .public) misspelled=\(SuggestCore.misspellingCount(inModelOutput: completion.text, original: request.selection, spelling: spelling), privacy: .public) chars=\(completion.text.count, privacy: .public) opposite=\(answer.opposite.rawValue, privacy: .public) stemWords=\(answer.stemWords, privacy: .public) kinds=\(SuggestCore.itemKinds(inModelOutput: completion.text) ?? "n/a", privacy: .public) attempt=\(attempt, privacy: .public)")
             if items.isEmpty, attempt == 1 {
                 Self.logger.notice("Suggest retry reason=no-usable-option")
                 await ask(request, rejected: rejected, attempt: 2)

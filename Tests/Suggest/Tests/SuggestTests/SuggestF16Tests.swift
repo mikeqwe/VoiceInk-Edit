@@ -83,9 +83,10 @@ final class SuggestF16Tests: XCTestCase {
         """
 
     func testHisWritingLanguageGivesTheSuggestPromptAsBefore() {
-        // F17 adds the opposite-reading rule and field, F18 the SPELLING sentence; nothing else of his prompt changes.
+        // F17 adds the opposite-reading rule and field, F18 the SPELLING sentence, F20 the directions, kinds and
+        // flexible count; nothing else of his prompt changes.
         XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru"),
-                       SuggestF18Tests.withF18(SuggestF17Tests.withF17(Self.suggestPromptBeforeF16)))
+                       SuggestF20Tests.withF20(SuggestF18Tests.withF18(SuggestF17Tests.withF17(Self.suggestPromptBeforeF16))))
         XCTAssertTrue(Self.suggestPromptBeforeF16.contains("The user writes Russian and English"), "the copy is the old prompt")
     }
 
@@ -134,8 +135,8 @@ final class SuggestF16Tests: XCTestCase {
         XCTAssertTrue(prompt.contains("a word or phrase that sounds like the SELECTION and fits the text better; a different word or wording"), prompt)
         XCTAssertTrue(prompt.contains("only that.\n- When the SELECTION says whether something is, can, must"), prompt) // F17's rule follows
         XCTAssertTrue(prompt.contains("invent none.\n- Prefer replacements that make sense in the text"), prompt)
-        XCTAssertTrue(prompt.contains("Return exactly 9 replacements")) // F17: was 7; the setting's default
-        XCTAssertTrue(prompt.hasSuffix("then \"replacements\" with exactly 9 distinct items."), prompt)
+        XCTAssertTrue(prompt.contains("Return up to 9 replacements")) // F17: was 7; the setting's default. F20: up to
+        XCTAssertTrue(prompt.hasSuffix(SuggestF20Tests.formatF20()), prompt)
     }
 
     // MARK: - The settings

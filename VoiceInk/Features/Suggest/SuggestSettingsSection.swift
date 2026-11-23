@@ -65,7 +65,7 @@ struct SuggestSettingsSection: View {
             } label: {
                 HStack(spacing: 4) {
                     Text("Number of Replacements")
-                    InfoTip("How many replacements Suggest lists, most likely first; keys 1–9 pick them. When fewer likely ones exist, the rest are other wordings that fit the text. When the selection can be read the other way round (with a negation added or removed), one of them is that reading. More replacements take a little longer to arrive. The default is 9.")
+                    InfoTip("The most replacements Suggest lists, most likely first; keys 1–9 pick them. After the likely ones come other wordings, each a different choice: plainer, shorter, more formal, more casual or clearer. When fewer different choices exist, the list is shorter. When the selection can be read the other way round (with a negation added or removed), one of them is that reading. More replacements take a little longer to arrive. The default is 9.")
                 }
             }
 

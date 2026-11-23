@@ -23,9 +23,9 @@ final class SuggestF18Tests: XCTestCase {
     /// His prompt is F16's verbatim copy with exactly F17's changes and then F18's one sentence.
     func testHisPromptIsF17sWithOnlyTheSpellingSentence() {
         let f17 = SuggestF17Tests.withF17(SuggestF16Tests.suggestPromptBeforeF16)
-        XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru"), Self.withF18(f17))
+        XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru"), SuggestF20Tests.withF20(Self.withF18(f17))) // + F20's changes
         let f17AtFive = SuggestF17Tests.withF17(SuggestF16Tests.suggestPromptBeforeF16, count: 5)
-        XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru", count: 5), Self.withF18(f17AtFive))
+        XCTAssertEqual(SuggestCore.systemPrompt(writingLanguage: "ru", count: 5), SuggestF20Tests.withF20(Self.withF18(f17AtFive), count: 5))
     }
 
     func testEverySettingGetsTheSentenceAndItGivesNoReason() {
