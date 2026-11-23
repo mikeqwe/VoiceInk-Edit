@@ -132,10 +132,29 @@ enum SuggestCore {
             .count
     }
 
-    /// The letter-and-digit runs of a text.
+    /// The letter-and-digit runs of a text. Fork F17: an apostrophe between two letters stays inside
+    /// the word, so a contraction is checked whole: "shouldn't" is a word, while its "shouldn" alone
+    /// is not, and the guard dropped "shouldn't merge" as a misspelling of "should merge".
     static func words(_ text: String) -> [String] {
-        text.split(whereSeparator: { !($0.isLetter || $0.isNumber) }).map(String.init)
+        let characters = Array(text)
+        var result: [String] = []
+        var current = ""
+        for (index, character) in characters.enumerated() {
+            if character.isLetter || character.isNumber {
+                current.append(character)
+            } else if apostrophes.contains(character), current.last?.isLetter == true,
+                index + 1 < characters.count, characters[index + 1].isLetter {
+                current.append(character)
+            } else if !current.isEmpty {
+                result.append(current)
+                current = ""
+            }
+        }
+        if !current.isEmpty { result.append(current) }
+        return result
     }
+
+    private static let apostrophes: Set<Character> = ["'", "\u{2019}"]
 
     /// Levenshtein distance in characters.
     static func editDistance(_ a: String, _ b: String) -> Int {

@@ -214,6 +214,21 @@ final class SuggestF17Tests: XCTestCase {
         XCTAssertEqual(a.opposite, .added)
     }
 
+    /// Live (after-r1c, 23.11 12:49): "shouldn't merge" for «should merge» was dropped as a misspelling, list item and
+    /// opposite alike, because the guard checked "shouldn" alone. macOS's checker knows "shouldn't" whole.
+    func testAContractionIsCheckedWholeSoANegationIsNotAMisspelling() {
+        XCTAssertEqual(SuggestCore.words("shouldn't merge, it's “quoted” 'x' rock’n’roll"),
+                       ["shouldn't", "merge", "it's", "quoted", "x", "rock’n’roll"])
+        XCTAssertEqual(SuggestCore.words("don' t 'tis"), ["don", "t", "tis"], "an apostrophe not between letters splits")
+        let known: Set<String> = ["should", "merge", "shouldn't", "t"]
+        let spelling = SuggestCore.Spelling(isWord: { known.contains($0) })
+        XCTAssertFalse(SuggestCore.isMisspelling("shouldn't merge", of: "should merge", spelling: spelling))
+        let a = answer("shouldn't merge", ["will merge", "shouldn't merge"], original: "should merge", spelling: spelling)
+        XCTAssertEqual(a.items, ["will merge", "shouldn't merge"])
+        XCTAssertEqual(a.opposite, .ranked)
+        XCTAssertTrue(SuggestCore.isMisspelling("shuld merge", of: "should merge", spelling: spelling), "the guard still works")
+    }
+
     func testNotJSONGivesNothing() {
         let a = SuggestCore.answer(fromModelOutput: "недостаточно", original: "достаточно")
         XCTAssertEqual(a, SuggestCore.Answer(items: [], opposite: .none))
