@@ -169,9 +169,20 @@ class AIEnhancementService: ObservableObject {
         // Fork F12: last, so it applies to everything above it.
         let outputLanguageSection = OutputLanguage.section(for: contextSnapshot?.outputLanguage ?? .off) ?? ""
 
-        return [prompt.finalPromptText, customVocabularySection, contextSection, outputLanguageSection]
+        // Fork F19: the result envelope, after everything, so it sets the reply's shape.
+        let envelopeSection = Self.usesResultEnvelope(configuration.provider) ? EnhancementResultCheck.envelopeInstruction : ""
+
+        return [prompt.finalPromptText, customVocabularySection, contextSection, outputLanguageSection, envelopeSection]
             .filter { !$0.isEmpty }
             .joined(separator: "\n\n")
+    }
+
+    /// Fork F19: every AI prompt's result comes inside <RESULT>…</RESULT> (`EnhancementResultCheck.pasted`), except
+    /// from Ollama and local CLI models: their instruction following is unmeasured, and a model that never writes the
+    /// tags would fail every take.
+    static func usesResultEnvelope(_ provider: AIProvider?) -> Bool {
+        guard let provider else { return false }
+        return provider != .ollama && provider != .localCLI && provider != .voiceInkRefine
     }
 
     private func makeRequest(
@@ -243,9 +254,11 @@ class AIEnhancementService: ObservableObject {
                 )
             }
             // Fork F15: a result holding the model's own notes is requested once more, then fails visibly.
+            let envelope = Self.usesResultEnvelope(provider)
             let outcome = try await EnhancementResultCheck.request(
                 decision: outputLanguage,
                 dictationLanguage: OutputLanguage.dictationLanguage(),
+                envelope: envelope,
                 text: { (result: AIChatCompletionResult) in result.text },
                 log: { line in logger.notice("\(line, privacy: .public)") }
             ) {
@@ -260,7 +273,9 @@ class AIEnhancementService: ObservableObject {
                     anthropicEffort: effort.effort
                 )
             }
-            guard case .accepted(let completion) = outcome else { throw EnhancementError.resultHeldModelNotes }
+            guard case .accepted(let completion) = outcome,
+                let pasted = EnhancementResultCheck.pasted(from: completion.text, envelope: envelope)
+            else { throw EnhancementError.resultHeldModelNotes }
             if let openRouterCompletion = completion.openRouterCompletion {
                 let routedProvider = openRouterCompletion.provider ?? "unknown"
                 let routingAttempt = openRouterCompletion.metadata?.attempt ?? 0
@@ -270,7 +285,7 @@ class AIEnhancementService: ObservableObject {
                 )
             }
             let filteredResult = AIEnhancementOutputFilter.filter(
-                completion.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                pasted.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             guard provider == .ollama || provider == .localCLI || !filteredResult.isEmpty else {
                 throw EnhancementError.enhancementFailed
