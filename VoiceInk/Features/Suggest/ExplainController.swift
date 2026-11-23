@@ -182,7 +182,7 @@ final class ExplainController {
         lastSelection = selection
         model.original = selection
         panel.fitToContent()
-        guard let target = Self.providerAndModel() else {
+        guard let target = SuggestController.providerAndModel() else {
             fail("\(title): the default mode has no AI provider. Nothing was changed.", reason: "no-provider")
             return nil
         }
@@ -257,16 +257,6 @@ final class ExplainController {
 
     private static func showMode() -> ModeConfig? {
         ModeManager.shared.configurations.first { $0.isEnabled && $0.outputMode == .show }
-    }
-
-    /// Suggest's target: the default mode's provider and model.
-    private static func providerAndModel() -> (provider: AIProvider, model: String?)? {
-        guard let mode = ModeManager.shared.getDefaultConfiguration(),
-            let name = mode.selectedAIProvider, let provider = AIProvider(rawValue: name),
-            provider.supportsEnhancement, provider != .voiceInkRefine
-        else { return nil }
-        let model = mode.selectedAIModel?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (provider, model?.isEmpty == false ? model : nil)
     }
 
     // MARK: - Keys and clicks

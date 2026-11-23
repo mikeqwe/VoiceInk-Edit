@@ -346,7 +346,8 @@ final class SuggestController {
         !Task.isCancelled && session?.phase == .thinking
     }
 
-    private static func providerAndModel() -> (provider: AIProvider, model: String?)? {
+    /// Suggest's target, and Explain's and Ask's: the default mode's provider and model.
+    static func providerAndModel() -> (provider: AIProvider, model: String?)? {
         guard let mode = ModeManager.shared.getDefaultConfiguration(),
             let name = mode.selectedAIProvider, let provider = AIProvider(rawValue: name),
             provider.supportsEnhancement, provider != .voiceInkRefine
