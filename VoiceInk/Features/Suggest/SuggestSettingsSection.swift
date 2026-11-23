@@ -8,6 +8,7 @@ struct SuggestSettingsSection: View {
     @AppStorage(SuggestCore.screenTextDefaultsKey) private var usesScreenText = true
     @AppStorage(EditingModelEffort.enhancement.defaultsKey) private var enhancementEffort = EditingModelEffort.enhancement.standard.rawValue
     @AppStorage(EditingModelEffort.suggest.defaultsKey) private var suggestEffort = EditingModelEffort.suggest.standard.rawValue
+    @AppStorage(EditingModelEffort.explain.defaultsKey) private var explainEffort = EditingModelEffort.explain.standard.rawValue
     @State private var keepOnApps = WebAccessibilityKeepOn.bundleIdentifiers()
     @AppStorage(SuggestLanguage.explainDefaultsKey) private var explainLanguage = SuggestLanguage.defaultExplainLanguage()
     @AppStorage(SuggestLanguage.writingDefaultsKey) private var writingLanguage = SuggestLanguage.defaultWritingLanguage()
@@ -92,6 +93,8 @@ struct SuggestSettingsSection: View {
 
             effortPicker("Claude Effort: Suggest", selection: $suggestEffort,
                          tip: "How much a Claude model thinks before it lists replacements. Model default (the default) sends no effort; Claude Haiku 5.5 then uses medium. Low is about twice as fast, but in a test it listed other forms of a correct word more often.")
+            effortPicker("Claude Effort: Explain and Ask", selection: $explainEffort, levels: [.low, .medium, .high, .xhigh, .max],
+                         tip: "How much a Claude model thinks before it explains the selection or answers a question about it. Model default (the default) sends no effort; Claude Haiku 5.5 then uses medium. Higher levels think longer: Max can take tens of seconds. A model that does not take the chosen level gets no effort.")
             effortPicker("Claude Effort: Modes", selection: $enhancementEffort,
                          tip: "The same for every mode's AI enhancement (cleanup, Rewrite). Model default (the default) sends no effort; Claude Haiku 5.5 then uses medium. Low is about twice as fast, but in a test it added words that were not said more often. Other providers and models without effort are unaffected.")
 
@@ -113,17 +116,30 @@ struct SuggestSettingsSection: View {
         }
     }
 
-    private func effortPicker(_ title: String, selection: Binding<String>, tip: String) -> some View {
+    private func effortPicker(
+        _ title: String, selection: Binding<String>, levels: [EditingModelEffort] = [.low, .medium, .high], tip: String
+    ) -> some View {
         Picker(selection: selection) {
-            Text("Low (faster)").tag(EditingModelEffort.low.rawValue)
-            Text("Medium").tag(EditingModelEffort.medium.rawValue)
-            Text("High").tag(EditingModelEffort.high.rawValue)
+            ForEach(levels, id: \.self) { level in
+                Text(Self.effortName(level)).tag(level.rawValue)
+            }
             Text("Model default").tag(EditingModelEffort.modelDefault.rawValue)
         } label: {
             HStack(spacing: 4) {
                 Text(title)
                 InfoTip(tip)
             }
+        }
+    }
+
+    private static func effortName(_ level: EditingModelEffort) -> String {
+        switch level {
+        case .modelDefault: return "Model default"
+        case .low: return "Low (faster)"
+        case .medium: return "Medium"
+        case .high: return "High"
+        case .xhigh: return "Extra high"
+        case .max: return "Max (slowest)"
         }
     }
 

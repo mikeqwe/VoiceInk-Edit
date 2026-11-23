@@ -34,15 +34,16 @@ extension AIService {
                 retryOnTimeout: retryOnTimeout
             )
         case .anthropic:
-            // Fork F11: cleanup, Rewrite and Suggest pass their effort; a model that takes none, the
-            // "default" setting and every other caller send LLMkit's stock request.
-            if let effort = anthropicEffort?.requestValue(model: resolvedModel) {
+            // Fork F11: cleanup, Rewrite, Suggest and (F20) Explain pass their effort; a model that takes
+            // none, the "default" setting and every other caller send LLMkit's stock request.
+            if let anthropicEffort, let effort = anthropicEffort.requestValue(model: resolvedModel) {
                 result = try await AnthropicEffortClient.chatCompletion(
                     apiKey: try chatAPIKey(for: provider, modelName: resolvedModel),
                     model: resolvedModel,
                     messages: messages,
                     systemPrompt: systemPrompt,
                     effort: effort,
+                    maxTokens: anthropicEffort.outputTokenLimit,
                     timeout: timeout,
                     retryOnTimeout: retryOnTimeout
                 )

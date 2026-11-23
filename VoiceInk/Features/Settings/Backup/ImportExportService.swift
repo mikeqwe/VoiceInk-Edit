@@ -200,6 +200,7 @@ class ImportExportService {
             suggestUsesScreenText: SuggestCore.usesScreenText(),
             enhancementModelEffort: EditingModelEffort.current(EditingModelEffort.enhancement).effort.rawValue,
             suggestModelEffort: EditingModelEffort.current(EditingModelEffort.suggest).effort.rawValue,
+            explainModelEffort: EditingModelEffort.current(EditingModelEffort.explain).effort.rawValue,
             outputDictationLanguage: OutputLanguage.dictationLanguage() ?? "",
             outputLanguageApps: OutputLanguage.bundleIdentifiers().apps,
             voiceMark: VoiceMark.storedDefaultMark().mark,

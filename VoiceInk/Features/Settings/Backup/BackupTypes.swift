@@ -113,6 +113,7 @@ struct GeneralBackup: Codable {
     let suggestUsesScreenText: Bool?
     let enhancementModelEffort: String?
     let suggestModelEffort: String?
+    let explainModelEffort: String?
     let outputDictationLanguage: String?
     let outputLanguageApps: [String]?
     let voiceMark: String?

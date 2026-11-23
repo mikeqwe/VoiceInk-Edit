@@ -211,10 +211,10 @@ final class ExplainController {
         guard let captured = await capture?.value, run == current, let session, session.phase == .thinking else { return }
         let message = ExplainCore.userMessage(
             selection: captured.selection, context: captured.context, question: session.question, earlier: earlier)
-        let effort = EditingModelEffort.current(EditingModelEffort.suggest)
+        let effort = EditingModelEffort.current(EditingModelEffort.explain)
         let context = captured.context
         let aroundChars = context.around.map { $0.before.utf16.count + $0.after.utf16.count } ?? 0
-        Self.logger.notice("Explain request kind=\(session.kind.rawValue, privacy: .public) provider=\(captured.provider.rawValue, privacy: .public) model=\(captured.model ?? "default", privacy: .public) selectionChars=\(captured.selection.count, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) screenChars=\(context.screen?.utf16.count ?? 0, privacy: .public) earlier=\(self.earlier.count, privacy: .public) answerLanguage=\(captured.answerLanguage, privacy: .public) afterPressSeconds=\(Date().timeIntervalSince(self.pressedAt), format: .fixed(precision: 2), privacy: .public)")
+        Self.logger.notice("Explain request kind=\(session.kind.rawValue, privacy: .public) provider=\(captured.provider.rawValue, privacy: .public) model=\(captured.model ?? "default", privacy: .public) selectionChars=\(captured.selection.count, privacy: .public) aroundChars=\(aroundChars, privacy: .public) otherTexts=\(context.other.count, privacy: .public) screenChars=\(context.screen?.utf16.count ?? 0, privacy: .public) earlier=\(self.earlier.count, privacy: .public) answerLanguage=\(captured.answerLanguage, privacy: .public) effort=\(captured.provider == .anthropic ? effort.effort.logValue(model: captured.model ?? "default", invalid: effort.invalid) : "n/a", privacy: .public) afterPressSeconds=\(Date().timeIntervalSince(self.pressedAt), format: .fixed(precision: 2), privacy: .public)")
         let started = Date()
         do {
             let completion = try await aiService.performChatCompletion(
@@ -223,7 +223,7 @@ final class ExplainController {
                 messages: [.user(message)],
                 systemPrompt: captured.systemPrompt,
                 localUserPrompt: message,
-                timeout: max(EnhancementRequestSettings.timeout, SuggestController.minimumRequestTimeout),
+                timeout: max(EnhancementRequestSettings.timeout, SuggestController.minimumRequestTimeout, effort.effort.minimumTimeout),
                 retryOnTimeout: false,
                 anthropicEffort: effort.effort
             )

@@ -287,6 +287,7 @@ enum BackupImporter {
         for (effort, setting) in [
             (general.enhancementModelEffort, EditingModelEffort.enhancement),
             (general.suggestModelEffort, EditingModelEffort.suggest),
+            (general.explainModelEffort, EditingModelEffort.explain),
         ] {
             guard let effort else { continue }
             if EditingModelEffort(rawValue: effort) != nil {

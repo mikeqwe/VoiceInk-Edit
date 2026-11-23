@@ -1,7 +1,8 @@
 import Foundation
 
 /// Fork F11: the effort sent with the Anthropic requests of every mode's AI enhancement (cleanup,
-/// Rewrite) and of Suggest, one setting per path.
+/// Rewrite) and of Suggest, one setting per path. F20: Explain and Ask got their own setting; until then
+/// they used Suggest's.
 ///
 /// Without `output_config.effort`, Claude Haiku 5.5 thinks at its default effort, `medium`, on every
 /// request (https://platform.claude.com/docs/en/build-with-claude/effort). On F11's evaluation, `low`
@@ -15,6 +16,10 @@ enum EditingModelEffort: String, CaseIterable, Sendable {
     case low
     case medium
     case high
+    /// F20: the two levels above `high`. Fewer models take them (`modelAccepts`), and they think longer, so
+    /// a request gets a larger output limit and timeout (`outputTokenLimit`, `minimumTimeout`).
+    case xhigh
+    case max
 
     /// One path's setting: where it is stored and what applies when nothing is.
     struct Setting: Sendable {
@@ -24,6 +29,8 @@ enum EditingModelEffort: String, CaseIterable, Sendable {
 
     static let enhancement = Setting(defaultsKey: "enhancementModelEffort", standard: .modelDefault)
     static let suggest = Setting(defaultsKey: "suggestModelEffort", standard: .modelDefault)
+    /// F20: Explain and Ask. Its standard is what they sent before with the owner's settings: no effort.
+    static let explain = Setting(defaultsKey: "explainModelEffort", standard: .modelDefault)
 
     /// The setting as stored. Unset means the path's standard; a value this build does not know is
     /// returned as `invalid`, so the caller can log it, and the standard applies.
@@ -46,23 +53,61 @@ enum EditingModelEffort: String, CaseIterable, Sendable {
         return invalid.map { "\(sent) invalid-setting=\($0)" } ?? sent
     }
 
-    /// Model ID prefixes that accept `output_config.effort`, from the docs' availability table
-    /// (effort page, 22.11.2026). A model outside the list gets no effort field, since the API
-    /// may reject it.
+    /// Model ID prefixes that accept `output_config.effort` at `low`, `medium` and `high`, from the docs'
+    /// availability table (effort page, 22.11.2026). A model outside the list gets no effort field, since
+    /// the API may reject it.
     static let supportedModelPrefixes = [
         "claude-fable-5", "claude-mythos-5", "claude-mythos-preview",
         "claude-opus-5", "claude-sonnet-5", "claude-haiku-5-5",
         "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5", "claude-sonnet-4-6",
     ]
 
-    static func modelAcceptsEffort(_ model: String) -> Bool {
-        supportedModelPrefixes.contains { model.hasPrefix($0) }
+    /// F20: the models that take `max`, and those that take `xhigh`, from the same page's level table
+    /// (23.11.2026). "Not every model that supports `max` supports `xhigh`"; Opus 4.5 takes neither.
+    static let maxModelPrefixes = [
+        "claude-fable-5", "claude-mythos-5", "claude-mythos-preview",
+        "claude-opus-5", "claude-sonnet-5", "claude-haiku-5-5",
+        "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6",
+    ]
+    static let xhighModelPrefixes = [
+        "claude-fable-5", "claude-mythos-5",
+        "claude-opus-5", "claude-sonnet-5", "claude-haiku-5-5",
+        "claude-opus-4-8", "claude-opus-4-7",
+    ]
+
+    /// Whether `model` takes this level.
+    func modelAccepts(_ model: String) -> Bool {
+        let prefixes: [String]
+        switch self {
+        case .modelDefault: return false
+        case .low, .medium, .high: prefixes = Self.supportedModelPrefixes
+        case .xhigh: prefixes = Self.xhighModelPrefixes
+        case .max: prefixes = Self.maxModelPrefixes
+        }
+        return prefixes.contains { model.hasPrefix($0) }
     }
 
     /// The `output_config.effort` value to send for `model`, or nil to send the stock request.
     func requestValue(model: String) -> String? {
-        guard self != .modelDefault, Self.modelAcceptsEffort(model) else { return nil }
-        return rawValue
+        modelAccepts(model) ? rawValue : nil
+    }
+
+    /// The request's `max_tokens`, which counts thinking too. 8192 is LLMkit's stock limit. At `xhigh` and
+    /// `max` the docs say to "set a large `max_tokens`"; 32000 is a quarter of Haiku 5.5's 128K.
+    var outputTokenLimit: Int {
+        switch self {
+        case .xhigh, .max: return 32_000
+        case .modelDefault, .low, .medium, .high: return 8192
+        }
+    }
+
+    /// The least time a request at this level is given: at `xhigh` and `max` the model may think for longer
+    /// than a caller's usual 30 s. Zero adds nothing to the caller's own timeout.
+    var minimumTimeout: TimeInterval {
+        switch self {
+        case .xhigh, .max: return 120
+        case .modelDefault, .low, .medium, .high: return 0
+        }
     }
 }
 
