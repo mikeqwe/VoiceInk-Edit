@@ -18,8 +18,8 @@ final class EnhancementResultEnvelopeTests: XCTestCase {
 
     func testHisLeakWithoutTheTagsIsNotPasted() {
         XCTAssertNil(EnhancementResultCheck.pasted(from: Self.hisLeak, envelope: true))
-        XCTAssertEqual(EnhancementResultCheck.problem(inReply: Self.hisLeak, envelope: true, decision: .off, dictationLanguage: "ru"),
-                       .resultTag)
+        XCTAssertEqual(EnhancementResultCheck.verdict(onReply: Self.hisLeak, envelope: true, decision: .off, dictationLanguage: "ru"),
+                       .reject(.resultTag))
     }
 
     func testABrokenEnvelopeIsNotPasted() {
@@ -31,14 +31,15 @@ final class EnhancementResultEnvelopeTests: XCTestCase {
 
     func testWithoutTheEnvelopeTheReplyIsPastedAsBefore() {
         XCTAssertEqual(EnhancementResultCheck.pasted(from: "Запушь в GitHub.", envelope: false), "Запушь в GitHub.")
-        XCTAssertNil(EnhancementResultCheck.problem(inReply: "Запушь в GitHub.", envelope: false, decision: .off, dictationLanguage: "ru"))
+        XCTAssertEqual(EnhancementResultCheck.verdict(onReply: "Запушь в GitHub.", envelope: false, decision: .off, dictationLanguage: "ru"),
+                       .paste("Запушь в GitHub."))
     }
 
     func testTheRulesStillCheckWhatIsInside() {
-        XCTAssertEqual(EnhancementResultCheck.problem(inReply: "<RESULT>Cleaned: push it.</RESULT>", envelope: true,
-                                                      decision: .off, dictationLanguage: "ru"), .stepLabel)
-        XCTAssertNil(EnhancementResultCheck.problem(inReply: "Cleaned: <RESULT>Push it.</RESULT>", envelope: true,
-                                                    decision: .off, dictationLanguage: "ru"), "a label outside is dropped")
+        XCTAssertEqual(EnhancementResultCheck.verdict(onReply: "<RESULT>Cleaned: push it.</RESULT>", envelope: true,
+                                                      decision: .off, dictationLanguage: "ru"), .reject(.stepLabel))
+        XCTAssertEqual(EnhancementResultCheck.verdict(onReply: "Cleaned: <RESULT>Push it.</RESULT>", envelope: true,
+                                                      decision: .off, dictationLanguage: "ru"), .paste("Push it."), "a label outside is dropped")
     }
 
     func testTheInstructionNamesTheTagsTheParserReads() {
@@ -58,8 +59,9 @@ final class EnhancementResultEnvelopeTests: XCTestCase {
             defer { sent += 1 }
             return replies[sent]
         }
-        guard case .accepted(let reply) = outcome else { return XCTFail("expected the second reply") }
-        XCTAssertEqual(EnhancementResultCheck.pasted(from: reply, envelope: true), "Разницу вариант не понял.")
+        guard case .accepted(let reply, let pasted) = outcome else { return XCTFail("expected the second reply") }
+        XCTAssertEqual(reply, "<RESULT>Разницу вариант не понял.</RESULT>")
+        XCTAssertEqual(pasted, "Разницу вариант не понял.")
         XCTAssertEqual(sent, 2)
         XCTAssertEqual(logged, ["Enhancement result rejected reason=result-tag attempt=1/2 outputLanguage=off action=retry"])
     }

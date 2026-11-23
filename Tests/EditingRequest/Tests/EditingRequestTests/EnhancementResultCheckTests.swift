@@ -75,8 +75,9 @@ final class EnhancementResultCheckTests: XCTestCase {
             defer { sent += 1 }
             return replies[sent]
         }
-        guard case .accepted(let text) = outcome else { return XCTFail("expected the second reply") }
+        guard case .accepted(let text, let pasted) = outcome else { return XCTFail("expected the second reply") }
         XCTAssertEqual(text, "Push to GitHub.")
+        XCTAssertEqual(pasted, "Push to GitHub.")
         XCTAssertEqual(sent, 2)
         XCTAssertEqual(logged, ["Enhancement result rejected reason=step-label attempt=1/2 outputLanguage=translate(en) action=retry"])
     }

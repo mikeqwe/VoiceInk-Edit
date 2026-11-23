@@ -273,9 +273,7 @@ class AIEnhancementService: ObservableObject {
                     anthropicEffort: effort.effort
                 )
             }
-            guard case .accepted(let completion) = outcome,
-                let pasted = EnhancementResultCheck.pasted(from: completion.text, envelope: envelope)
-            else { throw EnhancementError.resultHeldModelNotes }
+            guard case .accepted(let completion, let pasted) = outcome else { throw EnhancementError.resultHeldModelNotes }
             if let openRouterCompletion = completion.openRouterCompletion {
                 let routedProvider = openRouterCompletion.provider ?? "unknown"
                 let routingAttempt = openRouterCompletion.metadata?.attempt ?? 0

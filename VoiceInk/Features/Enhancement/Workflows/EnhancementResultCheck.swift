@@ -74,13 +74,19 @@ enum EnhancementResultCheck {
         return inside.isEmpty ? nil : inside
     }
 
-    /// The first problem found in a reply: no usable envelope (with `envelope`), then the rules below on what would
-    /// be pasted.
-    static func problem(inReply reply: String, envelope: Bool, decision: OutputLanguage.Decision, dictationLanguage: String?)
-        -> Problem?
+    /// What a reply gives: the text to paste, or the first problem found in it.
+    enum Verdict: Equatable, Sendable {
+        case paste(String)
+        case reject(Problem)
+    }
+
+    /// No usable envelope (with `envelope`) is the first problem, then the rules below on what would be pasted.
+    static func verdict(onReply reply: String, envelope: Bool, decision: OutputLanguage.Decision, dictationLanguage: String?)
+        -> Verdict
     {
-        guard let text = pasted(from: reply, envelope: envelope) else { return .resultTag }
-        return problem(in: text, decision: decision, dictationLanguage: dictationLanguage)
+        guard let text = pasted(from: reply, envelope: envelope) else { return .reject(.resultTag) }
+        if let found = problem(in: text, decision: decision, dictationLanguage: dictationLanguage) { return .reject(found) }
+        return .paste(text)
     }
 
     /// The first problem found in `text`, or nil when it can be pasted. `decision` is the take's output
@@ -103,7 +109,8 @@ enum EnhancementResultCheck {
     static let attempts = 2
 
     enum Outcome<Result> {
-        case accepted(Result)
+        /// The reply, for its metadata, and the text to paste from it.
+        case accepted(Result, pasted: String)
         /// Every attempt was rejected; the last reason.
         case rejected(Problem)
     }
@@ -121,8 +128,10 @@ enum EnhancementResultCheck {
         var attempt = 1
         while true {
             let result = try await send()
-            guard let found = problem(inReply: text(result), envelope: envelope, decision: decision, dictationLanguage: dictationLanguage) else {
-                return .accepted(result)
+            let found: Problem
+            switch verdict(onReply: text(result), envelope: envelope, decision: decision, dictationLanguage: dictationLanguage) {
+            case .paste(let pasted): return .accepted(result, pasted: pasted)
+            case .reject(let problem): found = problem
             }
             log(logLine(problem: found, attempt: attempt, decision: decision))
             guard attempt < attempts else { return .rejected(found) }
